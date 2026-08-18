@@ -11,8 +11,10 @@ import com.likelion.hackathon_be.routine.daily.repository.DailySuccessRecordRepo
 import com.likelion.hackathon_be.routine.domain.RepeatType;
 import com.likelion.hackathon_be.routine.domain.Routine;
 import com.likelion.hackathon_be.routine.domain.RoutineCategory;
+import com.likelion.hackathon_be.routine.dto.AvatarStageChangedResponse;
 import com.likelion.hackathon_be.routine.dto.DayStatus;
 import com.likelion.hackathon_be.routine.dto.RoutineVerificationResultResponse;
+import com.likelion.hackathon_be.routine.dto.SuccessSummaryResponse;
 import com.likelion.hackathon_be.routine.point.domain.RoutinePointClaim;
 import com.likelion.hackathon_be.routine.point.repository.RoutinePointClaimRepository;
 import com.likelion.hackathon_be.routine.repository.PhotoMissionTemplateRepository;
@@ -21,6 +23,8 @@ import com.likelion.hackathon_be.routine.verification.application.VerificationPh
 import com.likelion.hackathon_be.routine.verification.domain.RoutineVerification;
 import com.likelion.hackathon_be.routine.verification.domain.VerificationType;
 import com.likelion.hackathon_be.routine.verification.repository.RoutineVerificationRepository;
+import com.likelion.hackathon_be.story.application.StoryProgressionResult;
+import com.likelion.hackathon_be.story.application.StoryProgressionService;
 import com.likelion.hackathon_be.user.domain.User;
 import com.likelion.hackathon_be.user.repository.UserRepository;
 import java.lang.reflect.Field;
@@ -308,7 +312,8 @@ class RoutineCheckVerificationServiceTests {
                 dailyRoutineRepository,
                 verificationRepository,
                 dailySuccessRecordRepository,
-                pointClaimRepository
+                pointClaimRepository,
+                storyProgressionService()
         );
         return new DefaultRoutineVerificationService(
                 () -> new CurrentUser(USER_ID),
@@ -320,6 +325,19 @@ class RoutineCheckVerificationServiceTests {
                 mock(VerificationPhotoStorage.class),
                 completionService
         );
+    }
+
+    private StoryProgressionService storyProgressionService() {
+        StoryProgressionResult result = new StoryProgressionResult(
+                new SuccessSummaryResponse(0, 0, 0),
+                List.of(),
+                new AvatarStageChangedResponse(false, 1, 1)
+        );
+        StoryProgressionService service = mock(StoryProgressionService.class);
+        when(service.progressAfterNewDailySuccess(any(Long.class), any(Instant.class)))
+                .thenReturn(result);
+        when(service.currentProgress(any(Long.class))).thenReturn(result);
+        return service;
     }
 
     private void givenTargetAndLockedRows(DailyRoutine target, List<DailyRoutine> lockedRows) {

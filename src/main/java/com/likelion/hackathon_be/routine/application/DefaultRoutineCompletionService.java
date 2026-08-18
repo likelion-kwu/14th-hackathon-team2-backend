@@ -12,6 +12,7 @@ import com.likelion.hackathon_be.routine.dto.DailyRoutineStatus;
 import com.likelion.hackathon_be.routine.dto.DayResultResponse;
 import com.likelion.hackathon_be.routine.dto.DayStatus;
 import com.likelion.hackathon_be.routine.dto.RoutineVerificationResultResponse;
+import com.likelion.hackathon_be.routine.dto.VerificationUnlocksResponse;
 import com.likelion.hackathon_be.routine.dto.VerificationPointClaimResponse;
 import com.likelion.hackathon_be.routine.dto.VerificationResponse;
 import com.likelion.hackathon_be.routine.dto.VerifiedDailyRoutineResponse;
@@ -19,6 +20,8 @@ import com.likelion.hackathon_be.routine.point.repository.RoutinePointClaimRepos
 import com.likelion.hackathon_be.routine.verification.domain.RoutineVerification;
 import com.likelion.hackathon_be.routine.verification.domain.VerificationType;
 import com.likelion.hackathon_be.routine.verification.repository.RoutineVerificationRepository;
+import com.likelion.hackathon_be.story.application.StoryProgressionResult;
+import com.likelion.hackathon_be.story.application.StoryProgressionService;
 import com.likelion.hackathon_be.user.repository.UserRepository;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -47,6 +50,7 @@ public class DefaultRoutineCompletionService implements RoutineCompletionService
     private final RoutineVerificationRepository verificationRepository;
     private final DailySuccessRecordRepository dailySuccessRecordRepository;
     private final RoutinePointClaimRepository pointClaimRepository;
+    private final StoryProgressionService storyProgressionService;
 
     public DefaultRoutineCompletionService(
             TimeProvider timeProvider,
@@ -54,7 +58,8 @@ public class DefaultRoutineCompletionService implements RoutineCompletionService
             DailyRoutineRepository dailyRoutineRepository,
             RoutineVerificationRepository verificationRepository,
             DailySuccessRecordRepository dailySuccessRecordRepository,
-            RoutinePointClaimRepository pointClaimRepository
+            RoutinePointClaimRepository pointClaimRepository,
+            StoryProgressionService storyProgressionService
     ) {
         this.timeProvider = timeProvider;
         this.userRepository = userRepository;
@@ -62,6 +67,7 @@ public class DefaultRoutineCompletionService implements RoutineCompletionService
         this.verificationRepository = verificationRepository;
         this.dailySuccessRecordRepository = dailySuccessRecordRepository;
         this.pointClaimRepository = pointClaimRepository;
+        this.storyProgressionService = storyProgressionService;
     }
 
     @Override
@@ -99,7 +105,13 @@ public class DefaultRoutineCompletionService implements RoutineCompletionService
                 verification
         );
 
-        return toResponse(lockedTarget, verification, dailySuccessResult);
+        StoryProgressionResult storyProgressionResult = storyProgressionResult(
+                userId,
+                dailySuccessResult,
+                verificationRequestedAt
+        );
+
+        return toResponse(lockedTarget, verification, dailySuccessResult, storyProgressionResult);
     }
 
     private void lockUser(Long userId) {
@@ -186,7 +198,8 @@ public class DefaultRoutineCompletionService implements RoutineCompletionService
     private RoutineVerificationResultResponse toResponse(
             DailyRoutine dailyRoutine,
             RoutineVerification verification,
-            DailySuccessResult dailySuccessResult
+            DailySuccessResult dailySuccessResult,
+            StoryProgressionResult storyProgressionResult
     ) {
         return new RoutineVerificationResultResponse(
                 new VerificationResponse(
@@ -203,15 +216,29 @@ public class DefaultRoutineCompletionService implements RoutineCompletionService
                         dailySuccessResult.completedCount(),
                         dailySuccessResult.totalCount()
                 ),
-                null,
+                storyProgressionResult.successSummary(),
                 new VerificationPointClaimResponse(
                         false,
                         isPointClaimable(dailyRoutine),
                         rewardPoints(verification.getVerificationType())
                 ),
-                null,
+                new VerificationUnlocksResponse(
+                        storyProgressionResult.unlockedStories(),
+                        storyProgressionResult.avatarStageChanged()
+                ),
                 null
         );
+    }
+
+    private StoryProgressionResult storyProgressionResult(
+            Long userId,
+            DailySuccessResult dailySuccessResult,
+            Instant unlockedAt
+    ) {
+        if (dailySuccessResult.newlySucceeded()) {
+            return storyProgressionService.progressAfterNewDailySuccess(userId, unlockedAt);
+        }
+        return storyProgressionService.currentProgress(userId);
     }
 
     private boolean isPointClaimable(DailyRoutine dailyRoutine) {

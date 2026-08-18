@@ -1,6 +1,7 @@
 package com.likelion.hackathon_be.routine.daily.repository;
 
 import com.likelion.hackathon_be.routine.daily.domain.DailyRoutine;
+import com.likelion.hackathon_be.routine.domain.RoutineCategory;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.util.List;
@@ -20,6 +21,20 @@ public interface DailyRoutineRepository extends JpaRepository<DailyRoutine, Long
     List<DailyRoutine> findByUserIdAndServiceDateOrderByStartTimeSnapshotAscIdAsc(
             Long userId,
             LocalDate serviceDate
+    );
+
+    @Query("""
+            select distinct d.serviceDate
+            from DailyRoutine d
+            where d.userId = :userId
+              and d.serviceDate <= :throughDate
+              and d.categorySnapshot <> :excludedCategory
+            order by d.serviceDate asc
+            """)
+    List<LocalDate> findScheduledServiceDatesByUserIdThroughDateExcludingCategory(
+            @Param("userId") Long userId,
+            @Param("throughDate") LocalDate throughDate,
+            @Param("excludedCategory") RoutineCategory excludedCategory
     );
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
