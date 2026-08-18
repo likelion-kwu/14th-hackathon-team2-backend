@@ -1,9 +1,5 @@
 package com.likelion.hackathon_be.speech;
 
-import com.likelion.hackathon_be.common.error.ErrorCode;
-import com.likelion.hackathon_be.common.error.FeatureNotImplementedException;
-import com.likelion.hackathon_be.speech.application.NotImplementedSpeechAnalysisService;
-import com.likelion.hackathon_be.speech.application.NotImplementedSpeechStyleService;
 import com.likelion.hackathon_be.speech.domain.DialogueSituation;
 import com.likelion.hackathon_be.speech.domain.SentenceLength;
 import com.likelion.hackathon_be.speech.domain.SpeechAnalysisJobStatus;
@@ -12,31 +8,11 @@ import com.likelion.hackathon_be.speech.domain.SpeechLevel;
 import com.likelion.hackathon_be.speech.dto.UpdateSpeechStyleRequest;
 import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SpeechApiSkeletonTests {
-
-    @Test
-    void speechStyleSkeletonUses501Placeholder() {
-        NotImplementedSpeechStyleService service = new NotImplementedSpeechStyleService();
-
-        assertThatThrownBy(service::getPresets)
-                .isInstanceOfSatisfying(FeatureNotImplementedException.class, exception ->
-                        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.NOT_IMPLEMENTED));
-    }
-
-    @Test
-    void speechAnalysisSkeletonUses501Placeholder() {
-        NotImplementedSpeechAnalysisService service = new NotImplementedSpeechAnalysisService();
-
-        assertThatThrownBy(() -> service.getJob(UUID.randomUUID()))
-                .isInstanceOfSatisfying(FeatureNotImplementedException.class, exception ->
-                        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.NOT_IMPLEMENTED));
-    }
 
     @Test
     void updateSpeechStyleRequestOnlyContainsPatchSupportedSettings() {

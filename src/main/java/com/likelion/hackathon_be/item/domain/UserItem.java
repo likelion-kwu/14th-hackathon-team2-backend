@@ -40,6 +40,10 @@ public class UserItem {
         return userItem;
     }
 
+    public void setEquipped(boolean equipped) {
+        this.equipped = equipped;
+    }
+
     public Long getId() {
         return id;
     }
