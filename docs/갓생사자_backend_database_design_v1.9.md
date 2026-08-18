@@ -1,14 +1,14 @@
-# 갓생사자 Backend Database Design v1.8
+# 갓생사자 Backend Database Design v1.9
 
 - 작성 기준일: 2026-08-19
 - 대상 프로젝트: 2026 멋쟁이사자처럼 중앙해커톤 AAC 기업 연계 MVP
 - 문서 목적: Codex CLI와 백엔드 팀원이 DB / ORM / Migration 구현 시 따르는 데이터 설계 기준
-- 상위 제품 기준 문서: `갓생사자_PRD_v2.1.md`
-- 공통 구현 기준 문서: `project_common_prompt_v4.0.md`
+- 상위 제품 기준 문서: `갓생사자_PRD_v2.2.md`
+- 공통 구현 기준 문서: `project_common_prompt_v4.1.md`
 - 말투 기능 기준 문서: `speech_style_system_SRS_v2.7.md`
-- 이전 버전: `갓생사자_backend_database_design_v1.7.md`
+- 이전 버전: `갓생사자_backend_database_design_v1.8.md`
 - 상태: **MVP DB 설계 Freeze 후보 — 현재 저장소 분석 후 DB별 DDL 문법만 조정**
-- 2026-08-19 정책 동기화: `TO_DO`는 DailyRoutine/Verification은 생성할 수 있지만 진행률, DailySuccess, Story streak, RoutinePointClaim, Item/Competition Point 계산에서 제외한다. 별도 counter/status를 추가하지 않고 `category_snapshot`으로 제외한다.
+- 2026-08-19 정책 동기화: `TO_DO`는 DailyRoutine/Verification은 생성할 수 있지만 진행률, DailySuccess, Story streak, RoutinePointClaim, Item/Competition Point 계산에서 제외한다. 별도 counter/status를 추가하지 않고 `category_snapshot`으로 제외한다. 월간 기록 캘린더도 같은 Source of Truth에서 파생하며 새 Calendar 테이블/상태 컬럼을 만들지 않는다.
 - 핵심 목표: 2026-08-21까지 핵심 사용자 흐름을 안정적으로 시연할 수 있는 최소·일관 데이터 구조
 
 > 이 문서는 특정 DB, ORM, Migration 도구를 임의로 강제하지 않는다.
@@ -17,11 +17,13 @@
 
 ---
 
-# 1. v1.8 검토 결론
+# 1. v1.9 검토 결론
 
 v1.1의 큰 방향은 유지하지만 다음 설계는 데이터 중복 또는 동시성 문제를 만들 수 있어 수정한다.
 
-## 1.1 v1.8 확정 변경
+v1.9에서는 스키마를 추가하지 않고 월간 기록 캘린더를 Must 조회 기능으로 동기화한다. 캘린더는 기존 `DailyRoutine`, `RoutineVerification`, `DailySuccessRecord`에서 파생하고 `TO_DO`를 progression 집계에서 제외한다.
+
+## 1.1 v1.9 확정 변경
 
 2026-08-18 최종 합의로 Routine/Point 정책에 더해 Avatar asset 구조를 Freeze한다.
 
@@ -172,6 +174,8 @@ UserStoryUnlock의 최대 avatarStage
 | 개별 루틴 완료 | `RoutineVerification` 존재 여부 |
 | PHOTO / CHECK 방식 | `RoutineVerification.verification_type` |
 | 오늘 진행률 | 해당 `serviceDate`의 `category_snapshot != TO_DO` DailyRoutine 수 대비 해당 Verification 수 |
+| 월간 기록 캘린더 | 표시 월의 `DailyRoutine` + `RoutineVerification` + `DailySuccessRecord`에서 파생 (`TO_DO` 제외) |
+| 월 달성일 수 | 표시 월의 `DailySuccessRecord` 수 |
 | 하루 전체 성공 | `category_snapshot != TO_DO` 대상만으로 생성한 `DailySuccessRecord` |
 | 누적 하루 성공일 | `COUNT(DailySuccessRecord)` |
 | Point 수령 | `RoutinePointClaim` 존재 여부 |
@@ -2174,6 +2178,7 @@ UserStoryUnlock
 
 ```text
 날짜별 루틴 완료
+월간 기록 캘린더(Must)
 오늘/기간 수행률
 루틴별 완료율
 PHOTO count
@@ -2185,6 +2190,43 @@ CHECK count
 해금 Story
 현재 Avatar Stage
 ```
+
+## 36.1 월간 기록 캘린더 Source of Truth
+
+월간 캘린더는 기존 Record 조회 결과를 UI에 매핑하는 기능이다. 다음 구조를 새로 만들지 않는다.
+
+```text
+calendar_records
+monthly_calendar_states
+calendar_status
+monthly_success_counter
+별도 Calendar API용 snapshot table
+```
+
+진행률 대상은 `DailyRoutine.category_snapshot != TO_DO`다. 날짜별 `totalCount`는 대상 DailyRoutine 수, `completedCount`는 그중 `RoutineVerification`이 존재하는 수다.
+
+표시 규칙:
+
+```text
+totalCount == 0
+→ 빈칸 (`TO_DO`만 존재하는 날짜 포함)
+
+과거 날짜 + completedCount == 0 + totalCount > 0
+→ 빨강 X
+
+0 < completedCount < totalCount
+→ 노랑 -
+
+completedCount == totalCount && totalCount > 0
+→ 초록 ✓
+
+미래 날짜
+→ 빈칸
+```
+
+오늘 0개 완료는 실패가 확정되기 전까지 빈칸/중립으로 둔다. 기존 Record `dayStatus == FAILED`가 되면 빨강 X를 표시한다. 일부 완료는 노랑 -, 전체 완료는 초록 ✓다.
+
+표시 월의 `N일 달성`은 해당 월 `DailySuccessRecord` 수다. `DailySuccessRecord`가 이미 `TO_DO` 제외 전체 완료의 Source of Truth이므로 별도 월 달성 counter를 저장하지 않는다.
 
 ---
 

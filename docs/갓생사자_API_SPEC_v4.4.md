@@ -1,15 +1,16 @@
-# 갓생사자 API Specification v4.3
+# 갓생사자 API Specification v4.4
 
-> **문서 버전** v4.3  
-> **작성 기준일** 2026-08-19
+> **문서 버전** v4.4  
+> **작성 기준일** 2026-08-19  
 > **문서 상태** MVP 구현 기준 API 명세안  
-> **2026-08-19 정책 동기화** `TO_DO`는 PHOTO/CHECK 인증 가능한 1회성 보조 작업이지만 오늘 진행률, DailySuccess, Story streak, Point Claim, Item/Competition Point에서는 제외한다.
+> **2026-08-19 정책 동기화** `TO_DO`는 PHOTO/CHECK 인증 가능한 1회성 보조 작업이지만 오늘 진행률, DailySuccess, Story streak, Point Claim, Item/Competition Point에서는 제외한다. 월간 기록 캘린더는 Must이며 기존 Record API의 날짜별 집계를 UI Source로 사용한다.  
 > **대상** Frontend / Backend / AI Integration / QA / Codex CLI  
-> **상위 제품 기준** `갓생사자_PRD_v2.1.md`  
-> **공통 구현 기준** `project_common_prompt_v4.0.md`  
+> **상위 제품 기준** `갓생사자_PRD_v2.2.md`  
+> **공통 구현 기준** `project_common_prompt_v4.1.md`  
 > **말투 기능 기준** `speech_style_system_SRS_v2.7.md`  
-> **데이터베이스 기준** `갓생사자_backend_database_design_v1.8.md`  
+> **데이터베이스 기준** `갓생사자_backend_database_design_v1.9.md`  
 > **참고 문서** 팀 초안 `API_SPEC_v3.1.md`  
+> **v4.4 변경 요약** 월간 기록 캘린더를 Must UI 계약으로 확정했다. 새 Endpoint나 DTO를 추가하지 않고 `GET /records`를 월 단위(최대 31일)로 호출해 `days[].completedCount`, `days[].totalCount`, `days[].dayStatus`로 표시 상태를 계산한다. `TO_DO`만 있는 날은 빈칸, 과거 0개 완료는 빨강 X, 일부 완료는 노랑 -, 전체 완료는 초록 ✓, 오늘 0개 완료는 `FAILED` 확정 전까지 중립, 미래 날짜는 빈칸이다. 월 달성일 수는 표시 월의 `SUCCESS` 날짜 수다.  
 > **v4.3 변경 요약** Avatar 계약을 확정했다. 온보딩에서 성장 트랙 4종 중 하나를 고정 선택하고 optional 얼굴 사진을 multipart로 받아 얼굴 reference에만 사용한다. 최초 설정에서 Stage 1/2/3 세트를 준비하고 현재 Story Stage에 맞는 PNG만 인증된 이미지 Endpoint로 제공한다. 250×500 투명 PNG, host disk asset set 저장, 원본 사진 즉시 삭제, 온보딩 재생성 1회, 초기 생성 실패 시 기본 Stage 세트 fallback, Item 여러 개의 프론트 정적 PNG overlay를 반영했다. 별도 AvatarGenerationJob/asset table은 MVP에 추가하지 않는다.  
 > **v4.2 변경 요약** Routine category 5종, TO_DO=ONCE, 카테고리별 사전 추천 API, 완료 Routine Point Claim API(PHOTO 10/CHECK 5, serviceDate당 최대 3개, 당일 한정), 누적 Point 100P Item unlock, 월간 Point 경쟁 Ranking을 반영했다. Verification 성공 응답에서 Point/Item 자동 지급을 제거하고 Point Claim 시 Item milestone을 처리한다. Point 소비/차감 및 Battle Pass API는 만들지 않는다.  
 
@@ -477,7 +478,7 @@ AND 종료된 미인증 비-TO_DO DailyRoutine 존재
 | Verify | POST | `/daily-routines/{dailyRoutineId}/verifications/photo` | PHOTO 인증 |
 | Verify | POST | `/daily-routines/{dailyRoutineId}/verifications/check` | CHECK 인증 |
 | Point | POST | `/daily-routines/{dailyRoutineId}/point-claim` | `TO_DO` 제외 완료 Routine의 당일 Point 수령 |
-| Record | GET | `/records?fromDate=&toDate=` | 기간별 기록 |
+| Record | GET | `/records?fromDate=&toDate=` | 기간별 기록 / 월간 캘린더 Source |
 | Story | GET | `/stories` | Story 진행도와 EP.1~EP.5 |
 | Item | GET | `/items` | 도감/보유/착용 상태 |
 | Item | PUT | `/avatars/me/equipment` | 보유 Item 장착 상태 변경 |
@@ -2323,6 +2324,32 @@ DailySuccessRecord
 
 에서 계산한다.
 
+## 18.2 월간 기록 캘린더 Must 계약
+
+월간 기록 캘린더 때문에 별도 `/calendar` Endpoint, Calendar 전용 DTO, 월별 상태 Table 또는 snapshot을 추가하지 않는다. 프론트는 표시하려는 달의 시작일과 말일로 기존 Record API를 한 번 호출한다. 한 달은 최대 31일이므로 현재 조회 제한 안에 들어간다.
+
+예:
+
+```http
+GET /api/v1/records?fromDate=2026-09-01&toDate=2026-09-30
+```
+
+캘린더 상태는 `days[].completedCount`, `days[].totalCount`, `days[].dayStatus`를 사용해 다음처럼 표시한다. `completedCount`와 `totalCount`는 기존 Record 계약대로 `TO_DO`를 제외한 진행률 대상 Routine 기준이다.
+
+| 조건 | 표시 |
+|---|---|
+| `totalCount == 0` | 표시 없음 (`TO_DO`만 존재하는 날짜 포함) |
+| 과거 날짜이고 `totalCount > 0 && completedCount == 0` | 빨강 X |
+| `0 < completedCount < totalCount` | 노랑 - |
+| `totalCount > 0 && completedCount == totalCount` | 초록 ✓ |
+| 미래 날짜 | 표시 없음 |
+
+오늘 날짜에서 `completedCount == 0`인 경우에는 즉시 빨강 X로 표시하지 않는다. `dayStatus != FAILED`이면 아직 결과 미확정으로 보고 중립/빈칸을 유지하며, `dayStatus == FAILED`가 되면 빨강 X를 표시한다. 오늘 일부 완료는 노랑 -, 전체 완료는 초록 ✓다.
+
+캘린더 상단의 `이번 달 N일 달성`은 응답 `days` 중 `dayStatus == SUCCESS`인 날짜 수로 계산한다. 이는 표시 월의 `DailySuccessRecord` 수와 동일한 의미다. `summary.totalSuccessDays`는 전체 누적 성공일이므로 월 달성일 표시값으로 사용하지 않는다.
+
+사용자는 이전 달/다음 달로 자유롭게 이동할 수 있다. 미래 월을 조회해도 미래 날짜에는 캘린더 상태 아이콘을 표시하지 않는다.
+
 ---
 
 # 19. Unlock Progress
@@ -3229,3 +3256,4 @@ GET    /competition/leaderboard?month=YYYY-MM
 총 **35개 Endpoint**를 기본 계약으로 한다.
 
 실제 저장소에 이미 동등한 의미의 안정적인 Endpoint가 있다면 단순 naming 차이만으로 불필요하게 갈아엎지 않는다. 다만 제품 정책과 데이터 Source of Truth는 본 v4.3을 기준으로 맞춘다.
+
