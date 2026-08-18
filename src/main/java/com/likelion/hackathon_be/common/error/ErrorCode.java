@@ -35,6 +35,7 @@ public enum ErrorCode {
     PHOTO_NOT_DECIDABLE(422, "사진 인증 결과를 판단할 수 없습니다."),
     PHOTO_AI_UNAVAILABLE(503, "사진 인증 서비스를 사용할 수 없습니다."),
     ROUTINE_NOT_COMPLETED(409, "완료된 루틴만 Point를 수령할 수 있습니다."),
+    POINT_CLAIM_NOT_ELIGIBLE(409, "Point를 수령할 수 없는 루틴입니다."),
     POINT_ALREADY_CLAIMED(409, "이미 Point를 수령한 루틴입니다."),
     POINT_CLAIM_LIMIT_REACHED(409, "오늘 수령 가능한 Point 개수를 초과했습니다."),
     POINT_CLAIM_EXPIRED(409, "Point 수령 가능 시간이 지났습니다."),

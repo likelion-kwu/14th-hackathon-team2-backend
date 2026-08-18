@@ -2,8 +2,8 @@
 ## Software Requirements Specification
 
 - 문서 버전: v2.7
-- 작성 기준일: 2026-08-18
-- 문서 상태: MVP 구현 기준 확정본 (2026-08-18 Avatar/Point 연계 최종 동기화)
+- 작성 기준일: 2026-08-19
+- 문서 상태: MVP 구현 기준 확정본 (2026-08-19 TO_DO progression 정책까지 상위 문서와 동기화)
 - 대상 기능: 카카오톡 대화 기반 사용자 말투 분석 및 미래 아바타 대사 생성
 - 주요 독자: 기획자, 프론트엔드 개발자, 백엔드 개발자, AI 연동 담당자, QA 담당자, Codex CLI
 - v2.7 변경 요약: 말투 분석·대사 생성 요구사항은 변경하지 않고, 상위 Avatar 정책과 비말투 데이터 유지 범위를 최종 동기화했다. 말투 초기화는 `Avatar.growthTrack`, 현재 Stage asset set, 재생성 사용 상태, 장착 Item, Point Claim/Item/Story 기록에 영향을 주지 않는다. 사용자 얼굴 사진은 말투 시스템 데이터가 아니며 Avatar 생성 요청에서만 임시 사용 후 삭제한다.
@@ -40,14 +40,14 @@
 
 - 누적 하루 전체 루틴 성공 횟수
 - 연속 하루 전체 루틴 성공 기록
-- 완료 Routine에서 수령한 누적 Point 및 월간 Point 기록
+- `TO_DO`를 제외한 완료 Routine에서 수령한 누적 Point 및 월간 Point 기록
 - 누적 획득 Point 100P milestone으로 해금한 아이템
 - 연속 성공일 milestone으로 영구 해금한 스토리 Episode
 - 해금된 스토리에 따라 결정되는 아바타 외형 단계
 - Avatar 성장 트랙과 현재 Stage 이미지 asset set
 - Avatar 재생성 사용 상태
 
-사진/체크 Point 차등은 상위 제품 문서에서 PHOTO 10P / CHECK 5P로 확정되었다. 다만 본 말투 SRS는 Point Claim, Item 해금, Competition의 상세 로직을 정의하지 않고 최신 PRD/API/DB 문서를 따른다.
+사진/체크 Point 차등은 상위 제품 문서에서 PHOTO 10P / CHECK 5P로 확정되었으며 `TO_DO`는 Point Claim 비대상이다. `TO_DO`는 인증 기록만 남고 오늘 진행률, DailySuccess, Story streak, Item/Competition Point에도 반영되지 않는다. 다만 본 말투 SRS는 해당 상세 로직을 정의하지 않고 최신 PRD/API/DB 문서를 따른다.
 
 ---
 
@@ -849,7 +849,7 @@ OpenAI 2차 호출은 다음 작업을 수행한다.
 | ROUTINE_AVAILABLE | 루틴 수행 가능 시간 진입 |
 | ROUTINE_REMINDER | 정해진 시간 내 미완료 |
 | ROUTINE_COMPLETED | 개별 루틴 완료 |
-| ALL_COMPLETED | 오늘의 모든 루틴 완료 |
+| ALL_COMPLETED | 오늘의 진행률 대상 루틴 모두 완료 (`TO_DO` 제외) |
 | STREAK_CONTINUED | 연속 실천 기록 유지 |
 | STREAK_BROKEN | 연속 기록 중단 |
 | RETURN_AFTER_ABSENCE | 며칠 만에 다시 복귀 |
@@ -877,7 +877,7 @@ OpenAI 2차 호출은 다음 작업을 수행한다.
 개별 루틴 인증 성공 + 오늘 일부 미완료
 → ROUTINE_COMPLETED
 
-마지막 루틴 인증 성공 + 오늘 전체 완료
+마지막 진행률 대상 루틴 인증 성공 + 오늘 진행률 대상 전체 완료 (`TO_DO` 제외)
 → ALL_COMPLETED
 ```
 
