@@ -168,6 +168,19 @@ TO_DO
 Do not add cross-midnight routines in MVP.
 Require `startTime < endTime`; `24:00` is unsupported and the last representable minute is `23:59`.
 
+### TO_DO progression policy
+
+`RoutineCategory.TO_DO` is a one-time auxiliary task.
+
+- TO_DO may create a DailyRoutine and may be completed/verified.
+- TO_DO MUST NOT be included in today's routine progress.
+- TO_DO MUST NOT contribute to DailySuccess.
+- TO_DO MUST NOT affect Story streak progression.
+- TO_DO MUST NOT be eligible for RoutinePointClaim.
+- Therefore TO_DO cannot contribute to Item unlock or Competition points.
+- Do not implement these exclusions by adding duplicated counters or status columns.
+  Derive them in service logic from Routine.category.
+
 ### Routine recommendations
 
 MVP recommendations come from a server-side, pre-reviewed pool (code/JSON/YAML), normally returning 3 candidates for the selected category.
