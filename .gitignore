@@ -35,3 +35,13 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### Local secrets and runtime files ###
+.env
+.env.*
+*.pem
+/uploads/
+/temp-uploads/
+/tmp-uploads/
+/avatar-storage/
+/data/avatars/
