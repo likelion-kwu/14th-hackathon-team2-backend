@@ -18,6 +18,12 @@ public interface DailyRoutineRepository extends JpaRepository<DailyRoutine, Long
             LocalDate toDate
     );
 
+    List<DailyRoutine> findByUserIdAndServiceDateBetweenOrderByServiceDateDescStartTimeSnapshotAscIdAsc(
+            Long userId,
+            LocalDate fromDate,
+            LocalDate toDate
+    );
+
     List<DailyRoutine> findByUserIdAndServiceDateOrderByStartTimeSnapshotAscIdAsc(
             Long userId,
             LocalDate serviceDate

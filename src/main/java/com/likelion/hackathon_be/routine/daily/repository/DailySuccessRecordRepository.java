@@ -27,4 +27,16 @@ public interface DailySuccessRecordRepository extends JpaRepository<DailySuccess
             @Param("userId") Long userId,
             @Param("throughDate") LocalDate throughDate
     );
+
+    @Query("""
+            select record.serviceDate
+            from DailySuccessRecord record
+            where record.userId = :userId
+              and record.serviceDate between :fromDate and :toDate
+            """)
+    List<LocalDate> findServiceDatesByUserIdAndServiceDateBetween(
+            @Param("userId") Long userId,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate") LocalDate toDate
+    );
 }
