@@ -1,6 +1,8 @@
 package com.likelion.hackathon_be.story.repository;
 
 import com.likelion.hackathon_be.story.domain.UserStoryUnlock;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -24,4 +26,17 @@ public interface UserStoryUnlockRepository extends JpaRepository<UserStoryUnlock
                and se.active = true
             """, nativeQuery = true)
     Optional<Integer> findHighestUnlockedEpisodeNumber(@Param("userId") Long userId);
+
+    List<UserStoryUnlock> findByUserId(Long userId);
+
+    @Query("""
+            select unlock.episodeId
+            from UserStoryUnlock unlock
+            where unlock.userId = :userId
+              and unlock.episodeId in :episodeIds
+            """)
+    List<Long> findEpisodeIdsByUserIdAndEpisodeIdIn(
+            @Param("userId") Long userId,
+            @Param("episodeIds") Collection<Long> episodeIds
+    );
 }

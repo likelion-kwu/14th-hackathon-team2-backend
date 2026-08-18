@@ -28,6 +28,14 @@ public class UserStoryUnlock {
     protected UserStoryUnlock() {
     }
 
+    public static UserStoryUnlock create(Long userId, Long episodeId, Instant unlockedAt) {
+        UserStoryUnlock unlock = new UserStoryUnlock();
+        unlock.userId = userId;
+        unlock.episodeId = episodeId;
+        unlock.unlockedAt = unlockedAt;
+        return unlock;
+    }
+
     public Long getId() {
         return id;
     }

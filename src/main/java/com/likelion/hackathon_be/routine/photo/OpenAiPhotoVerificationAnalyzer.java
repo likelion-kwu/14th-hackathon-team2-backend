@@ -1,5 +1,7 @@
 package com.likelion.hackathon_be.routine.photo;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.List;
 
 import com.likelion.hackathon_be.ai.image.ImageInputValidator;
@@ -10,6 +12,10 @@ import com.likelion.hackathon_be.ai.openai.OpenAiGatewayException;
 import com.likelion.hackathon_be.ai.openai.OpenAiImageInput;
 import com.likelion.hackathon_be.common.error.BusinessException;
 import com.likelion.hackathon_be.common.error.ErrorCode;
+import com.likelion.hackathon_be.routine.verification.application.PhotoVerificationAnalysis;
+import com.likelion.hackathon_be.routine.verification.application.PhotoVerificationAnalyzer;
+import com.likelion.hackathon_be.routine.verification.application.PhotoVerificationAnalyzerException;
+import com.likelion.hackathon_be.routine.verification.application.PhotoVerificationInput;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -59,14 +65,15 @@ public class OpenAiPhotoVerificationAnalyzer implements PhotoVerificationAnalyze
     }
 
     @Override
-    public PhotoVerificationDecision analyze(PhotoVerificationInput input) {
+    public PhotoVerificationAnalysis analyze(PhotoVerificationInput input) {
+        byte[] photo = readPhoto(input);
         ValidatedImage image;
         try {
-            image = imageValidator.validate(input.image(), input.mediaType());
+            image = imageValidator.validate(photo, input.contentType());
         } catch (ImageValidationException exception) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
-        String request = "Required object code: " + input.objectCode()
+        String request = "Required object code: " + input.verificationObject()
                 + "\nRequired gesture code: " + input.gestureCode();
         for (int schemaAttempt = 0; schemaAttempt < 2; schemaAttempt++) {
             try {
@@ -81,28 +88,38 @@ public class OpenAiPhotoVerificationAnalyzer implements PhotoVerificationAnalyze
                 );
                 PhotoVerificationDecision decision = parse(result);
                 if (consistent(decision)) {
-                    return decision;
+                    return new PhotoVerificationAnalysis(
+                            decision.decidable(),
+                            decision.objectMatched(),
+                            decision.gestureMatched()
+                    );
                 }
             } catch (OpenAiGatewayException exception) {
                 if (exception.kind() == OpenAiGatewayException.Kind.REFUSED) {
-                    return new PhotoVerificationDecision(
-                            false,
-                            false,
-                            false,
-                            PhotoVerificationDecision.ReasonCode.MODEL_REFUSED
-                    );
+                    return new PhotoVerificationAnalysis(false, false, false);
                 }
                 if (exception.kind() == OpenAiGatewayException.Kind.INVALID_RESPONSE && schemaAttempt == 0) {
                     continue;
                 }
-                throw new BusinessException(ErrorCode.PHOTO_AI_UNAVAILABLE);
+                throw new PhotoVerificationAnalyzerException("OpenAI photo verification is unavailable", exception);
             } catch (RuntimeException exception) {
                 if (schemaAttempt == 1) {
-                    throw new BusinessException(ErrorCode.PHOTO_AI_UNAVAILABLE);
+                    throw new PhotoVerificationAnalyzerException("OpenAI photo verification response is invalid", exception);
                 }
             }
         }
-        throw new BusinessException(ErrorCode.PHOTO_AI_UNAVAILABLE);
+        throw new PhotoVerificationAnalyzerException("OpenAI photo verification response is invalid");
+    }
+
+    private byte[] readPhoto(PhotoVerificationInput input) {
+        try {
+            if (Files.size(input.photoPath()) > ImageInputValidator.DEFAULT_MAX_BYTES) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+            }
+            return Files.readAllBytes(input.photoPath());
+        } catch (IOException exception) {
+            throw new PhotoVerificationAnalyzerException("Cannot read temporary verification photo", exception);
+        }
     }
 
     private PhotoVerificationDecision parse(JsonNode result) {

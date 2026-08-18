@@ -16,4 +16,11 @@ public interface UserItemRepository extends JpaRepository<UserItem, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select userItem from UserItem userItem where userItem.userId = :userId")
     List<UserItem> findAllByUserIdForUpdate(@Param("userId") Long userId);
+
+    @Query("""
+            select userItem.itemId
+            from UserItem userItem
+            where userItem.userId = :userId
+            """)
+    List<Long> findItemIdsByUserId(@Param("userId") Long userId);
 }
