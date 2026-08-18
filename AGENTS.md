@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> 2026-08-19 sync check: TO_DO progression exclusion is the current agreed policy and the PRD / common prompt / DB design / API spec / speech SRS copies delivered with this file have been synchronized to it.
+
 ## Purpose
 
 This repository is the backend for **갓생사자**, a 2026 멋쟁이사자처럼 중앙해커톤 AAC-linked MVP.

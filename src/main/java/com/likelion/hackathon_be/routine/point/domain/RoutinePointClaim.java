@@ -34,6 +34,21 @@ public class RoutinePointClaim {
     protected RoutinePointClaim() {
     }
 
+    public static RoutinePointClaim create(
+            Long userId,
+            Long dailyRoutineId,
+            short amount,
+            Instant claimedAt
+    ) {
+        RoutinePointClaim pointClaim = new RoutinePointClaim();
+        pointClaim.userId = userId;
+        pointClaim.dailyRoutineId = dailyRoutineId;
+        pointClaim.amount = amount;
+        pointClaim.claimedAt = claimedAt;
+        pointClaim.createdAt = claimedAt;
+        return pointClaim;
+    }
+
     public Long getId() {
         return id;
     }

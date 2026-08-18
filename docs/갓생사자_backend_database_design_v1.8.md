@@ -1,6 +1,6 @@
 # 갓생사자 Backend Database Design v1.8
 
-- 작성 기준일: 2026-08-18
+- 작성 기준일: 2026-08-19
 - 대상 프로젝트: 2026 멋쟁이사자처럼 중앙해커톤 AAC 기업 연계 MVP
 - 문서 목적: Codex CLI와 백엔드 팀원이 DB / ORM / Migration 구현 시 따르는 데이터 설계 기준
 - 상위 제품 기준 문서: `갓생사자_PRD_v2.1.md`
@@ -8,6 +8,7 @@
 - 말투 기능 기준 문서: `speech_style_system_SRS_v2.7.md`
 - 이전 버전: `갓생사자_backend_database_design_v1.7.md`
 - 상태: **MVP DB 설계 Freeze 후보 — 현재 저장소 분석 후 DB별 DDL 문법만 조정**
+- 2026-08-19 정책 동기화: `TO_DO`는 DailyRoutine/Verification은 생성할 수 있지만 진행률, DailySuccess, Story streak, RoutinePointClaim, Item/Competition Point 계산에서 제외한다. 별도 counter/status를 추가하지 않고 `category_snapshot`으로 제외한다.
 - 핵심 목표: 2026-08-21까지 핵심 사용자 흐름을 안정적으로 시연할 수 있는 최소·일관 데이터 구조
 
 > 이 문서는 특정 DB, ORM, Migration 도구를 임의로 강제하지 않는다.
@@ -45,7 +46,8 @@ Routine과 보상 정책:
 ```text
 RoutineCategory = SKIN / WELL_BEING / HEALTH_FIT / DIET / TO_DO
 RepeatType = DAILY / DAYS_OF_WEEK / ONCE
-TO_DO = 특정 날짜 1회성
+TO_DO = 특정 날짜 1회성 보조 작업
+TO_DO = DailyRoutine/Verification 가능, 진행률/DailySuccess/Story/PointClaim/Item/Competition 제외
 추천 Routine = DB 테이블 없이 서버 정적 Recommendation Pool
 PHOTO Point = 10
 CHECK Point = 5
@@ -139,10 +141,11 @@ User
     └─ DailyRoutine
         └─ RoutineVerification (0..1)
 
-같은 serviceDate의 모든 DailyRoutine에 Verification 존재
+같은 serviceDate의 `category_snapshot != TO_DO` DailyRoutine이 1개 이상 존재하고
+그 대상 DailyRoutine 모두에 Verification 존재
 → DailySuccessRecord 1건
 
-RoutineVerification 성공
+`category_snapshot != TO_DO` RoutineVerification 성공
 → 사용자가 같은 serviceDate 안에서 Point Claim
 → RoutinePointClaim (PHOTO 10 / CHECK 5, 일 최대 3개)
 → 누적 획득 Point 100P milestone
@@ -168,13 +171,13 @@ UserStoryUnlock의 최대 avatarStage
 |---|---|
 | 개별 루틴 완료 | `RoutineVerification` 존재 여부 |
 | PHOTO / CHECK 방식 | `RoutineVerification.verification_type` |
-| 오늘 진행률 | 해당 `serviceDate`의 DailyRoutine 수 대비 Verification 수 |
-| 하루 전체 성공 | `DailySuccessRecord` |
+| 오늘 진행률 | 해당 `serviceDate`의 `category_snapshot != TO_DO` DailyRoutine 수 대비 해당 Verification 수 |
+| 하루 전체 성공 | `category_snapshot != TO_DO` 대상만으로 생성한 `DailySuccessRecord` |
 | 누적 하루 성공일 | `COUNT(DailySuccessRecord)` |
 | Point 수령 | `RoutinePointClaim` 존재 여부 |
 | 누적 획득 Point | `SUM(RoutinePointClaim.amount)` |
 | 월간 경쟁 Point | 해당 월 `RoutinePointClaim.amount` 합계 |
-| 연속 성공 | `DailyRoutine.service_date` + `DailySuccessRecord.service_date` 계산 |
+| 연속 성공 | `category_snapshot != TO_DO`인 `DailyRoutine.service_date` + `DailySuccessRecord.service_date` 계산 |
 | Item 보유 | `UserItem` |
 | Item milestone 처리 | `ItemUnlockRecord.required_points` |
 | Story 해금 | `UserStoryUnlock` |
@@ -685,6 +688,21 @@ repeat_type = ONCE
 - 과거 DailyRoutine/Verification/PointClaim은 유지
 - Recommendation Pool은 정적 설정이므로 별도 DB 테이블을 만들지 않는다.
 
+### TO_DO progression exclusion
+
+`TO_DO`는 DailyRoutine과 RoutineVerification을 정상 생성한다. 다만 다음 계산에서는 항상 제외한다.
+
+```text
+오늘 진행률 분자/분모
+DailySuccessRecord 생성 조건
+ScheduledDates / streak 계산
+RoutinePointClaim
+ItemUnlockRecord 도달 Point
+월간 Competition Point
+```
+
+DB에 별도 `progress_eligible`, `reward_eligible`, status, counter 컬럼을 추가하지 않는다. `DailyRoutine.category_snapshot == TO_DO`를 Service/Query 조건에서 제외하는 것이 Source of Truth다.
+
 # 11. ROUTINE_REPEAT_DAYS
 
 | 컬럼 | 논리 타입 | NULL | 제약 |
@@ -729,8 +747,8 @@ ONCE
 
 이 테이블이 필요한 이유:
 
-- 오늘 진행률의 분모
-- 과거 루틴 기록
+- 오늘 진행률의 분모 (`category_snapshot != TO_DO`만 계산 대상)
+- 과거 루틴 기록 (`TO_DO` 포함)
 - 루틴이 있던 실패일과 원래 루틴이 없던 날 구분
 - 반복 설정 수정 후 과거 상태 보존
 - 연속 하루 성공 계산
@@ -1110,7 +1128,7 @@ Vision API 오류
 
 ## Point 정책과 분리
 
-Verification 자체에는 Point 컬럼을 저장하지 않는다. VerificationType에 따라 Claim 시 서버가 정책 값을 결정한다.
+Verification 자체에는 Point 컬럼을 저장하지 않는다. `TO_DO`가 아닌 경우에만 VerificationType에 따라 Claim 시 서버가 정책 값을 결정한다. `TO_DO` Verification은 성공 기록만 남고 Claim으로 이어지지 않는다.
 
 ```text
 PHOTO → 10P
@@ -1147,13 +1165,14 @@ Claim 조건:
 
 ```text
 RoutineVerification 존재
+AND DailyRoutine.category_snapshot != TO_DO
 AND authenticated user가 해당 DailyRoutine 소유
 AND server current serviceDate == DailyRoutine.service_date
 AND 해당 user + serviceDate의 기존 PointClaim 수 < 3
 AND 해당 DailyRoutine PointClaim 없음
 ```
 
-금액은 클라이언트가 보내지 않는다. 서버가 VerificationType으로 결정한다.
+금액은 클라이언트가 보내지 않는다. 먼저 `category_snapshot != TO_DO`를 검증한 뒤 서버가 VerificationType으로 결정한다.
 
 ```text
 PHOTO → 10
@@ -1203,12 +1222,14 @@ UNIQUE(user_id, service_date)
 해당 `user + serviceDate`에:
 
 ```text
-DailyRoutine >= 1
+eligibleDailyRoutine = DailyRoutine WHERE category_snapshot != TO_DO
+
+eligibleDailyRoutine >= 1
 AND
-모든 DailyRoutine에 RoutineVerification 존재
+모든 eligibleDailyRoutine에 RoutineVerification 존재
 ```
 
-할 때만 생성한다.
+할 때만 생성한다. `TO_DO`가 미완료/실패여도 DailySuccess에는 영향을 주지 않으며, `TO_DO`만 존재하는 serviceDate에는 DailySuccessRecord를 생성하지 않는다.
 
 ## 왜 streak_count를 저장하지 않는가
 
@@ -1250,7 +1271,7 @@ COUNT(daily_success_records WHERE user_id = ?)
 
 ```text
 ScheduledDates
-= 사용자에게 DailyRoutine이 1개 이상 존재하는 distinct serviceDate
+= 사용자에게 `category_snapshot != TO_DO` DailyRoutine이 1개 이상 존재하는 distinct serviceDate
 
 SuccessDates
 = DailySuccessRecord.serviceDate
@@ -1310,7 +1331,9 @@ AND 아직 미해금
 
 미인증 DailyRoutine의 `actualEndAtExclusive`에 도달하면 그 Routine은 실패다.
 
-해당 `serviceDate`에 실패 Routine이 하나라도 생기는 순간:
+다만 `TO_DO` 실패는 완료 기록상 실패일 뿐 DailySuccess/streak에는 영향을 주지 않는다.
+
+해당 `serviceDate`의 `category_snapshot != TO_DO` Routine에 실패가 하나라도 생기는 순간:
 
 ```text
 그 serviceDate는 하루 성공 불가
@@ -1577,14 +1600,15 @@ User lock
 serviceDate DailyRoutine lock
 시간창/소유권/중복 검증
 RoutineVerification INSERT
-모든 DailyRoutine 완료 여부 검사
-→ 전부 완료면 DailySuccessRecord INSERT(중복 방지)
+현재 완료가 TO_DO이면 DailySuccess/Story/Point 경로를 갱신하지 않고 완료 기록만 유지
+TO_DO가 아니면 `category_snapshot != TO_DO` DailyRoutine 완료 여부 검사
+→ 대상 전부 완료면 DailySuccessRecord INSERT(중복 방지)
 → 최신 maxAchievedStreak 계산
 → 조건 만족 Story Unlock
 COMMIT
 ```
 
-응답에는 Point를 자동 지급하지 않고 해당 완료 루틴이 당일 Claim 가능한지와 예상 Point(10/5)를 표시할 수 있다.
+응답에는 Point를 자동 지급하지 않는다. `TO_DO`는 `claimable=false`로 표시하고, 그 외 완료 루틴만 당일 Claim 가능 여부와 예상 Point(10/5)를 표시할 수 있다.
 
 ## PointClaim 개념 흐름
 
@@ -1592,13 +1616,14 @@ COMMIT
 BEGIN
 1. User row lock
 2. target DailyRoutine 소유권 + Verification 존재 확인
-3. server current serviceDate == target.serviceDate 확인
-4. target PointClaim 존재 → POINT_ALREADY_CLAIMED
-5. 해당 user + serviceDate PointClaim count >= 3 → POINT_CLAIM_LIMIT_REACHED
-6. VerificationType으로 amount 결정(PHOTO=10, CHECK=5)
-7. RoutinePointClaim INSERT
-8. totalEarnedPoints SUM
-9. 새로 도달한 100P Item milestone 전부 처리
+3. target.category_snapshot == TO_DO → Point Claim 비대상으로 거부
+4. server current serviceDate == target.serviceDate 확인
+5. target PointClaim 존재 → POINT_ALREADY_CLAIMED
+6. 해당 user + serviceDate PointClaim count >= 3 → POINT_CLAIM_LIMIT_REACHED
+7. VerificationType으로 amount 결정(PHOTO=10, CHECK=5)
+8. RoutinePointClaim INSERT
+9. totalEarnedPoints SUM
+10. 새로 도달한 100P Item milestone 전부 처리
 COMMIT
 ```
 
@@ -2013,10 +2038,10 @@ partial index 검토.
 다음에 사용한다.
 
 ```text
-오늘 진행률
+오늘 진행률(`TO_DO` 제외)
 serviceDate 집합 lock
-하루 성공 판정
-streak 계산
+하루 성공 판정(`TO_DO` 제외)
+streak 계산(`TO_DO` 제외)
 기록
 ```
 
@@ -2611,7 +2636,8 @@ PRESET→KAKAO 생성 실패 시 기존 Profile 유지
 1. XP / Experience / Coin 없음
 
 2. PHOTO와 CHECK 모두 개별 Routine 완료
-   Point Claim 시 PHOTO=10P / CHECK=5P, 인증 성공 즉시 자동 지급하지 않음
+   `TO_DO`는 Verification만 저장하고 Point Claim 비대상
+   그 외 Routine의 Point Claim 시 PHOTO=10P / CHECK=5P, 인증 성공 즉시 자동 지급하지 않음
 
 3. 한 DailyRoutine에는 성공 Verification 최대 1개
    PHOTO XOR CHECK
@@ -2619,11 +2645,11 @@ PRESET→KAKAO 생성 실패 시 기존 Profile 유지
 4. DailyRoutine 완료 상태는 Verification 존재 여부에서 파생
    별도 status 없음
 
-5. 하루 성공은 serviceDate당 DailySuccessRecord 최대 1개
+5. 하루 성공은 `category_snapshot != TO_DO` DailyRoutine만 대상으로 판정하며 serviceDate당 DailySuccessRecord 최대 1개
 
 6. Item 기준은 누적 획득 Point 100P 단위
 
-7. Story 기준은 연속 '하루 전체 성공일'이며 MVP 해금 기준은 10/20/30/40/50일
+7. Story 기준은 `TO_DO`를 제외한 연속 '하루 전체 성공일'이며 MVP 해금 기준은 10/20/30/40/50일
 
 8. streak 숫자는 DB에 cached 저장하지 않음
 
@@ -2655,7 +2681,9 @@ PRESET→KAKAO 생성 실패 시 기존 Profile 유지
 
 21. TO_DO는 ONCE이며 특정 날짜 DailyRoutine 1개만 생성
 
-22. Point Claim은 해당 serviceDate 당일에만 가능하고 사용자당 하루 최대 3개
+21-A. TO_DO는 Verification은 가능하지만 오늘 진행률, DailySuccess, Story streak, RoutinePointClaim, Item unlock, Competition Point에는 반영하지 않음
+
+22. Point Claim은 `TO_DO`가 아닌 완료 DailyRoutine에서만 해당 serviceDate 당일에 가능하고 사용자당 하루 최대 3개
 
 23. Point는 소비/차감하지 않으며 별도 wallet/balance counter를 저장하지 않음
 

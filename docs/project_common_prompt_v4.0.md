@@ -1,7 +1,8 @@
 # 프로젝트 공통 설명 프롬프트 v4.0
 
 - 문서 상태: MVP 개발 기준 동기화본
-- 작성 기준일: 2026-08-18
+- 2026-08-19 정책 동기화: `TO_DO`는 인증 가능한 1회성 보조 작업이지만 오늘 진행률, DailySuccess, Story streak, Point Claim, Item 해금, Competition Point에는 반영하지 않는다.
+- 작성 기준일: 2026-08-19
 - 대상 프로젝트: 2026 멋쟁이사자처럼 중앙해커톤 AAC 기업 연계 프로젝트
 - 활용 범위: 기획, 질문, API 명세서, 데이터베이스 설계, 화면 설계, 코드 구현, 테스트, 배포, 발표 자료
 - 상위 제품 기준 문서: `갓생사자_PRD_v2.1.md`
@@ -52,7 +53,7 @@
 
 사용자가 루틴을 지키려는 이유는 체크 표시를 채우기 위해서가 아니라 더 나은 미래의 자신이 되고 싶기 때문이다.
 
-이 서비스는 완료 루틴에서 수령한 Point를 Item 해금과 월간 경쟁으로 연결하고, 연속 하루 성공 기록을 Story 해금과 아바타 외형 변화로 표현하며, 아바타가 사용자의 말투로 반응하게 하여 현재 행동과 미래의 나를 연결한다.
+이 서비스는 `TO_DO`를 제외한 완료 루틴에서 수령한 Point를 Item 해금과 월간 경쟁으로 연결하고, `SKIN / WELL_BEING / HEALTH_FIT / DIET`의 연속 하루 성공 기록을 Story 해금과 아바타 외형 변화로 표현하며, 아바타가 사용자의 말투로 반응하게 하여 현재 행동과 미래의 나를 연결한다.
 
 ---
 
@@ -93,10 +94,10 @@
 -> 사진 또는 체크 방식으로 인증
 -> 사진 인증 시 AI 판정
 -> 개별 루틴 완료 상태 저장
--> 오늘의 진행률 반영
--> 오늘 적용된 모든 루틴 완료 여부 판정
+-> `TO_DO` 제외 오늘의 진행률 반영
+-> 오늘 적용된 `SKIN / WELL_BEING / HEALTH_FIT / DIET` 루틴 완료 여부 판정
 -> 하루 성공 시 누적 성공일과 연속 성공일 갱신
--> 완료 루틴을 눌러 당일 Point 수령(PHOTO 10P/CHECK 5P, 최대 3개)
+-> `TO_DO` 제외 완료 루틴을 눌러 당일 Point 수령(PHOTO 10P/CHECK 5P, 최대 3개)
 -> 누적 획득 Point 100P milestone 확인 및 랜덤 아이템 해금
 -> 연속 성공일 milestone 확인 및 Episode 해금
 -> 해금된 Episode에 따른 아바타 외형 Stage 반영
@@ -311,7 +312,7 @@ MVP에서는 다음 8개 상황마다 대사 5개를 생성한다.
 | `ROUTINE_AVAILABLE` | 루틴 수행 가능 시간 진입 |
 | `ROUTINE_REMINDER` | 정해진 시간 내 미완료 |
 | `ROUTINE_COMPLETED` | 개별 루틴 완료 |
-| `ALL_COMPLETED` | 오늘의 모든 루틴 완료 |
+| `ALL_COMPLETED` | 오늘의 진행률 대상 루틴 모두 완료 (`TO_DO` 제외) |
 | `STREAK_CONTINUED` | 연속 실천 기록 유지 |
 | `STREAK_BROKEN` | 연속 기록 중단 |
 | `RETURN_AFTER_ABSENCE` | 며칠 만에 복귀 |
@@ -351,7 +352,7 @@ DIET
 TO_DO
 ```
 
-`SKIN / WELL_BEING / HEALTH_FIT / DIET`는 `DAILY` 또는 `DAYS_OF_WEEK` 반복 루틴이고, `TO_DO`는 특정 날짜의 `ONCE` 일회성 루틴이다.
+`SKIN / WELL_BEING / HEALTH_FIT / DIET`는 `DAILY` 또는 `DAYS_OF_WEEK` 반복 루틴이고, `TO_DO`는 특정 날짜의 `ONCE` 일회성 보조 작업이다. `TO_DO`는 DailyRoutine 생성과 PHOTO/CHECK 인증은 가능하지만 오늘 진행률, DailySuccess, Story streak, Point Claim, Item 해금, Competition Point에서는 제외한다.
 
 ### 카테고리별 추천
 
@@ -383,6 +384,7 @@ TO_DO:
 - 이미 시작 시간이 지난 루틴은 수정/삭제로 당일 수행 대상을 소급 변경하지 않음
 - 같은 serviceDate에서 첫 성공 Verification 발생 후 해당 날짜 DailyRoutine 집합 고정
 - 이미 확정된 Verification, PointClaim, DailySuccess, ItemUnlock, StoryUnlock을 이후 Routine 수정/삭제로 취소하지 않음
+- `TO_DO` 완료에는 Verification만 저장하며 PointClaim/DailySuccess/Story/Item/Competition 계산에는 사용하지 않음
 
 ### 루틴 관련 제외
 
@@ -419,7 +421,7 @@ TO_DO:
 인증 성공 + 일부 루틴 남음
 → ROUTINE_COMPLETED
 
-인증 성공 + 오늘 전체 루틴 완료
+인증 성공 + 오늘의 진행률 대상 루틴 전체 완료 (`TO_DO` 제외)
 → ALL_COMPLETED
 ```
 
@@ -546,10 +548,11 @@ AI 또는 이미지 분석 기능은 다음 항목만 간단히 확인한다.
 - 두 방식 모두 해당 루틴의 수행 시간 안에서만 성공 인증할 수 있다.
 - 종료 시간이 지난 미인증 루틴은 실패이며 이후 인증할 수 없다.
 - 한 루틴은 사진 또는 체크 중 하나의 방식으로만 완료 처리한다.
-- 두 방식 모두 오늘 진행률과 하루 전체 루틴 성공 판정에 동일하게 반영한다.
+- `SKIN / WELL_BEING / HEALTH_FIT / DIET`에서는 두 방식 모두 오늘 진행률과 하루 전체 루틴 성공 판정에 동일하게 반영한다.
+- `TO_DO`에서는 PHOTO/CHECK 모두 완료·인증 기록만 남기고 진행률과 하루 성공 판정에는 반영하지 않는다.
 - 인증 성공 자체에서는 Point를 지급하지 않는다.
-- 완료 루틴을 같은 `serviceDate` 안에서 눌러 Point를 직접 수령한다.
-- PHOTO 10P / CHECK 5P.
+- `TO_DO`를 제외한 완료 루틴을 같은 `serviceDate` 안에서 눌러 Point를 직접 수령한다.
+- Point 대상 루틴은 PHOTO 10P / CHECK 5P이며 `TO_DO`는 0P가 아니라 **Point Claim 비대상**이다.
 - 한 serviceDate에서 최대 3개 완료 루틴만 Point 수령 가능.
 - 날짜가 바뀌면 미수령 Point는 소멸.
 - 경험치/XP는 사용하지 않으며 Point는 MVP에서 소비/차감하지 않는다.
@@ -558,7 +561,7 @@ AI 또는 이미지 분석 기능은 다음 항목만 간단히 확인한다.
 
 ## 6.8 아이템 해금, 스토리 및 아바타 외형
 
-개별 루틴 인증은 오늘 진행률과 하루 전체 성공 판정에 반영한다. Point 수령과 하루 성공은 별도 사건이다.
+`SKIN / WELL_BEING / HEALTH_FIT / DIET` 개별 루틴 인증은 오늘 진행률과 하루 전체 성공 판정에 반영한다. `TO_DO` 인증은 완료 기록만 남기며 진행률·하루 성공·Point에 영향을 주지 않는다. Point 수령과 하루 성공은 별도 사건이다.
 
 ### Point 수령
 
@@ -568,7 +571,8 @@ CHECK 완료 루틴 → 5P
 ```
 
 - 인증 성공 즉시 자동 지급 X
-- 완료 루틴을 눌러 수령
+- `TO_DO`는 Point Claim 비대상
+- 그 외 완료 루틴을 눌러 수령
 - 당일만 수령 가능
 - serviceDate당 최대 3개
 - 동일 DailyRoutine 중복 수령 금지
@@ -580,11 +584,11 @@ CHECK 완료 루틴 → 5P
 
 ### 하루 전체 성공과 Story
 
-하루 전체 성공 정의와 연속 기록 규칙은 기존과 동일하다. 연속 성공 10/20/30/40/50회에서 EP.1~EP.5를 영구 해금하며 Stage는 1→2→3으로 진행하고 EP.3~EP.5에서 Stage 3을 유지한다. 누적 하루 성공일은 기록 지표로 유지하지만 Item 해금에 사용하지 않는다.
+하루 전체 성공은 `SKIN / WELL_BEING / HEALTH_FIT / DIET` DailyRoutine만 대상으로 판정한다. `TO_DO`만 있는 날은 성공일로 세지 않고 streak도 끊지 않는다. 연속 성공 10/20/30/40/50회에서 EP.1~EP.5를 영구 해금하며 Stage는 1→2→3으로 진행하고 EP.3~EP.5에서 Stage 3을 유지한다. 누적 하루 성공일은 기록 지표로 유지하지만 Item 해금에 사용하지 않는다.
 
 ### 경쟁하기
 
-- `Asia/Seoul` 기준 한 달 동안 실제 수령한 Point 합계로 순위 계산
+- `Asia/Seoul` 기준 한 달 동안 실제 수령한 Point 합계로 순위 계산 (`TO_DO`는 Point Claim 비대상이므로 제외)
 - Point 소비 기능 없음
 - 월 변경 시 새 달 합계로 다시 계산하고 누적 Point/Item 해금 이력은 유지
 - 동점 공동 순위(`1,2,2,4`)
@@ -720,8 +724,8 @@ AI는 다음 기능에 사용한다.
 - 카메라 사진 인증
 - AI 기반 간단한 사진 판정
 - 체크 인증
-- 인증 결과 저장 및 오늘 진행률 반영
-- 완료 루틴 Point 직접 수령(PHOTO 10P/CHECK 5P, 일 3개, 당일 한정)
+- 인증 결과 저장 및 오늘 진행률 반영 (`TO_DO` 제외)
+- `TO_DO` 제외 완료 루틴 Point 직접 수령(PHOTO 10P/CHECK 5P, 일 3개, 당일 한정)
 - 누적 Point 100P 단위 랜덤 Item 해금
 - 월간 획득 Point 공동 순위 경쟁하기
 - 하루 전체 루틴 성공 판정
@@ -858,8 +862,9 @@ API 명세서를 작성할 때는 다음 흐름을 중심으로 설계한다.
 -> 오늘의 루틴 조회
 -> 미션 조회
 -> 사진 또는 체크 인증
--> 하루 전체 루틴 성공 판정 및 누적·연속 성공 기록 처리
--> 아이템/스토리 해금 및 스토리 단계에 따른 아바타 외형 반영
+-> `TO_DO`는 완료 기록만 저장하고 성장/보상 계산에서 제외
+-> 그 외 카테고리의 하루 전체 루틴 성공 판정 및 누적·연속 성공 기록 처리
+-> Point Claim 기반 아이템 해금 / Story 해금 및 스토리 단계에 따른 아바타 외형 반영
 -> 기록 조회
 ```
 
