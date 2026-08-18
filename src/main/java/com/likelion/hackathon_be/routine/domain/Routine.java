@@ -58,6 +58,31 @@ public class Routine {
     protected Routine() {
     }
 
+    public static Routine create(
+            Long userId,
+            RoutineCategory category,
+            String content,
+            LocalTime startTime,
+            LocalTime endTime,
+            RepeatType repeatType,
+            String verificationObject,
+            LocalDate effectiveFrom,
+            Instant now
+    ) {
+        Routine routine = new Routine();
+        routine.userId = userId;
+        routine.category = category;
+        routine.content = content;
+        routine.startTime = startTime;
+        routine.endTime = endTime;
+        routine.repeatType = repeatType;
+        routine.verificationObject = verificationObject;
+        routine.effectiveFrom = effectiveFrom;
+        routine.createdAt = now;
+        routine.updatedAt = now;
+        return routine;
+    }
+
     public Long getId() {
         return id;
     }

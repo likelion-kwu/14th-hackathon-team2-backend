@@ -14,6 +14,12 @@ public class RoutineRepeatDay {
     protected RoutineRepeatDay() {
     }
 
+    public static RoutineRepeatDay of(Long routineId, DayOfWeek dayOfWeek) {
+        RoutineRepeatDay repeatDay = new RoutineRepeatDay();
+        repeatDay.id = RoutineRepeatDayId.of(routineId, dayOfWeek);
+        return repeatDay;
+    }
+
     public RoutineRepeatDayId getId() {
         return id;
     }

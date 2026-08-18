@@ -1,6 +1,7 @@
 package com.likelion.hackathon_be.routine.daily.domain;
 
 import com.likelion.hackathon_be.routine.domain.RoutineCategory;
+import com.likelion.hackathon_be.routine.domain.Routine;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -56,6 +57,22 @@ public class DailyRoutine {
     private Instant updatedAt;
 
     protected DailyRoutine() {
+    }
+
+    public static DailyRoutine createSnapshot(Routine routine, LocalDate serviceDate, Instant now) {
+        DailyRoutine dailyRoutine = new DailyRoutine();
+        dailyRoutine.routineId = routine.getId();
+        dailyRoutine.userId = routine.getUserId();
+        dailyRoutine.serviceDate = serviceDate;
+        dailyRoutine.categorySnapshot = routine.getCategory();
+        dailyRoutine.contentSnapshot = routine.getContent();
+        dailyRoutine.startTimeSnapshot = routine.getStartTime();
+        dailyRoutine.endTimeSnapshot = routine.getEndTime();
+        dailyRoutine.verificationObjectSnapshot = routine.getVerificationObject();
+        dailyRoutine.missionTemplateId = null;
+        dailyRoutine.createdAt = now;
+        dailyRoutine.updatedAt = now;
+        return dailyRoutine;
     }
 
     public Long getId() {

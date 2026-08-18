@@ -20,6 +20,13 @@ public class RoutineRepeatDayId implements Serializable {
     protected RoutineRepeatDayId() {
     }
 
+    public static RoutineRepeatDayId of(Long routineId, DayOfWeek dayOfWeek) {
+        RoutineRepeatDayId id = new RoutineRepeatDayId();
+        id.routineId = routineId;
+        id.dayOfWeek = dayOfWeek;
+        return id;
+    }
+
     public Long getRoutineId() {
         return routineId;
     }
