@@ -42,4 +42,18 @@ public interface RoutinePointClaimRepository extends JpaRepository<RoutinePointC
             where pointClaim.userId = :userId
             """)
     long sumAmountByUserId(@Param("userId") Long userId);
+
+    @Query("""
+            select pointClaim.userId as userId,
+                   coalesce(sum(pointClaim.amount), 0) as earnedPoints
+            from RoutinePointClaim pointClaim
+            where pointClaim.claimedAt >= :fromInclusive
+              and pointClaim.claimedAt < :toExclusive
+            group by pointClaim.userId
+            order by coalesce(sum(pointClaim.amount), 0) desc, pointClaim.userId asc
+            """)
+    List<MonthlyPointSum> sumMonthlyPointsByUser(
+            @Param("fromInclusive") Instant fromInclusive,
+            @Param("toExclusive") Instant toExclusive
+    );
 }
