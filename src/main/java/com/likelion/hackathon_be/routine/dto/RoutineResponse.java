@@ -15,6 +15,8 @@ public record RoutineResponse(
         String repeatType,
         List<String> daysOfWeek,
         String verificationObject,
+        LocalDate effectiveFrom,
+        boolean appliedToCurrentServiceDate,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

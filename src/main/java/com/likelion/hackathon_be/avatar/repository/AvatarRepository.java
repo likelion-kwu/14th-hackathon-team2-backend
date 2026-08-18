@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface AvatarRepository extends JpaRepository<Avatar, Long> {
+    boolean existsByUserId(Long userId);
+
     Optional<Avatar> findByUserId(Long userId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

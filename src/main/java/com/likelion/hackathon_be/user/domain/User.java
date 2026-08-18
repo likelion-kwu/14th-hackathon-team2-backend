@@ -36,6 +36,11 @@ public class User {
         return user;
     }
 
+    public void updateNickname(String nickname, Instant now) {
+        this.nickname = nickname;
+        this.updatedAt = now;
+    }
+
     public Long getId() {
         return id;
     }

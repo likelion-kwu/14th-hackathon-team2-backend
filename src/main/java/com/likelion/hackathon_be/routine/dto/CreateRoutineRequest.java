@@ -14,7 +14,6 @@ public record CreateRoutineRequest(
         @NotNull
         RoutineCategory category,
         @NotBlank
-        @Size(max = 100)
         String content,
         LocalDate scheduledDate,
         @NotNull

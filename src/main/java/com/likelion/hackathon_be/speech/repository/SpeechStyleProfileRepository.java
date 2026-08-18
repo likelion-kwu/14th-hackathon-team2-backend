@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface SpeechStyleProfileRepository extends JpaRepository<SpeechStyleProfile, Long> {
+    boolean existsByUserId(Long userId);
+
     Optional<SpeechStyleProfile> findByUserId(Long userId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
