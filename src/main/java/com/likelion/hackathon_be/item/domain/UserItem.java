@@ -31,6 +31,19 @@ public class UserItem {
     protected UserItem() {
     }
 
+    public static UserItem create(Long userId, Long itemId, Instant acquiredAt) {
+        UserItem userItem = new UserItem();
+        userItem.userId = userId;
+        userItem.itemId = itemId;
+        userItem.equipped = false;
+        userItem.acquiredAt = acquiredAt;
+        return userItem;
+    }
+
+    public void setEquipped(boolean equipped) {
+        this.equipped = equipped;
+    }
+
     public Long getId() {
         return id;
     }

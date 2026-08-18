@@ -38,6 +38,22 @@ public class SpeechStyleExample {
     protected SpeechStyleExample() {
     }
 
+    public static SpeechStyleExample create(
+            Long profileId,
+            SpeechExampleCategory category,
+            SpeechExampleSourceType sourceType,
+            String content,
+            Instant now
+    ) {
+        SpeechStyleExample example = new SpeechStyleExample();
+        example.profileId = profileId;
+        example.category = category;
+        example.sourceType = sourceType;
+        example.content = content;
+        example.createdAt = now;
+        return example;
+    }
+
     public Long getId() {
         return id;
     }

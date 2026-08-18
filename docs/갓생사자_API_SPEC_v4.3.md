@@ -1,8 +1,9 @@
 # 갓생사자 API Specification v4.3
 
 > **문서 버전** v4.3  
-> **작성 기준일** 2026-08-18  
+> **작성 기준일** 2026-08-19
 > **문서 상태** MVP 구현 기준 API 명세안  
+> **2026-08-19 정책 동기화** `TO_DO`는 PHOTO/CHECK 인증 가능한 1회성 보조 작업이지만 오늘 진행률, DailySuccess, Story streak, Point Claim, Item/Competition Point에서는 제외한다.
 > **대상** Frontend / Backend / AI Integration / QA / Codex CLI  
 > **상위 제품 기준** `갓생사자_PRD_v2.1.md`  
 > **공통 구현 기준** `project_common_prompt_v4.0.md`  
@@ -69,7 +70,7 @@ POST /sessions
 → GET /daily-routines
 → POST /daily-routines/{id}/photo-mission
 → POST PHOTO 또는 CHECK verification
-→ 완료 Routine에서 POST point-claim
+→ `TO_DO` 제외 완료 Routine에서 POST point-claim
 
 → Verification 내부에서
    DailySuccessRecord
@@ -342,6 +343,7 @@ ROUTINE_NOT_COMPLETED
 POINT_ALREADY_CLAIMED
 POINT_CLAIM_LIMIT_REACHED
 POINT_CLAIM_EXPIRED
+POINT_CLAIM_NOT_ELIGIBLE
 ```
 
 ## Speech
@@ -423,15 +425,16 @@ FAILED
 판정:
 
 ```text
-DailyRoutine 0개
+`category != TO_DO` DailyRoutine 0개
 → NO_ROUTINE
+(`TO_DO`만 존재해도 progression dayStatus는 NO_ROUTINE)
 
-1개 이상 존재
+`category != TO_DO` DailyRoutine 1개 이상
 AND DailySuccessRecord 존재
 → SUCCESS
 
-1개 이상 존재
-AND 종료된 미인증 DailyRoutine 존재
+`category != TO_DO` DailyRoutine 1개 이상
+AND 종료된 미인증 비-TO_DO DailyRoutine 존재
 → FAILED
 
 그 외
@@ -473,7 +476,7 @@ AND 종료된 미인증 DailyRoutine 존재
 | Mission | POST | `/daily-routines/{dailyRoutineId}/photo-mission` | Photo Mission 준비/조회 |
 | Verify | POST | `/daily-routines/{dailyRoutineId}/verifications/photo` | PHOTO 인증 |
 | Verify | POST | `/daily-routines/{dailyRoutineId}/verifications/check` | CHECK 인증 |
-| Point | POST | `/daily-routines/{dailyRoutineId}/point-claim` | 완료 Routine의 당일 Point 수령 |
+| Point | POST | `/daily-routines/{dailyRoutineId}/point-claim` | `TO_DO` 제외 완료 Routine의 당일 Point 수령 |
 | Record | GET | `/records?fromDate=&toDate=` | 기간별 기록 |
 | Story | GET | `/stories` | Story 진행도와 EP.1~EP.5 |
 | Item | GET | `/items` | 도감/보유/착용 상태 |
@@ -1003,7 +1006,9 @@ GET /api/v1/home
 ```
 
 
-### dayStatus
+### progress / dayStatus 계산
+
+`progress.completedCount`, `progress.totalCount`, `progress.percentage`, `dayStatus`, 성공일/streak은 모두 `category != TO_DO` DailyRoutine만 사용한다. `TO_DO`는 `routines` 목록과 개별 status에는 표시할 수 있지만 이 집계에는 포함하지 않는다.
 
 ```text
 NO_ROUTINE
@@ -1516,6 +1521,8 @@ ONCE
 
 공통으로 `startTime < endTime`, `24:00` 미지원, 지원 verificationObject를 검증한다.
 
+`TO_DO`는 scheduledDate에 DailyRoutine 1개를 materialize하고 PHOTO/CHECK 인증까지 허용한다. 단, 오늘 진행률·DailySuccess·Story streak·Point Claim·Item unlock·Competition Point에서는 제외한다. 이 판단은 DailyRoutine의 category snapshot으로 서버가 수행한다.
+
 반복 Routine의 당일 적용과 집합 고정 규칙은 기존 계약을 유지한다. `ONCE`는 scheduledDate에 DailyRoutine 1개만 materialize한다.
 
 ## 12.5 Routine 수정
@@ -1543,6 +1550,8 @@ GET /api/v1/daily-routines?date=2026-08-17
 ```
 
 `date` 생략 시 서버 기준 오늘.
+
+응답의 `completedCount`, `totalCount`, `percentage`, `dayStatus`는 `category != TO_DO`만 집계한다. `TO_DO` DailyRoutine 자체는 `routines` 배열에 포함할 수 있다. 완료된 `TO_DO`의 `pointClaim`은 `claimable=false`, `rewardPoints=null`이다.
 
 호출 시 `ensureMaterialized`를 수행할 수 있다.
 
@@ -1783,7 +1792,7 @@ AI를 호출하지 않는다.
 일부 루틴만 완료
 → ROUTINE_COMPLETED
 
-마지막 루틴 완료로 하루 전체 성공
+마지막 진행률 대상 루틴 완료로 하루 전체 성공 (`TO_DO` 제외)
 → ALL_COMPLETED
 ```
 
@@ -1811,6 +1820,31 @@ AI를 호출하지 않는다.
   }
 }
 ```
+
+### TO_DO 인증 성공 응답 규칙
+
+`TO_DO` PHOTO/CHECK 인증도 `RoutineVerification`을 생성하고 `dailyRoutine.status=COMPLETED`로 반환한다. 다만 progression/reward는 갱신하지 않는다.
+
+```json
+{
+  "pointClaim": {
+    "autoAwarded": false,
+    "claimable": false,
+    "rewardPoints": null
+  },
+  "unlocks": {
+    "stories": [],
+    "avatarStageChanged": {
+      "changed": false
+    }
+  },
+  "dialogue": {
+    "situation": "ROUTINE_COMPLETED"
+  }
+}
+```
+
+`dayResult`와 `successSummary`는 `TO_DO` 자체 때문에 변경되지 않는다. 해당 날짜에 비-TO_DO 루틴이 없다면 progression `dayStatus`는 `NO_ROUTINE`이다.
 
 ### 사진 판정 실패 422
 
@@ -1898,14 +1932,15 @@ Verification 성공 Transaction:
 
 ```text
 Verification INSERT
-→ Day 전체 완료 검사
+→ target category가 TO_DO이면 완료 기록만 저장하고 progression/reward 계산 종료
+→ 그 외에는 비-TO_DO Day 전체 완료 검사
 → 필요 시 DailySuccessRecord INSERT
 → maxAchievedStreak 계산
 → Story Unlock
 → Avatar Stage
 ```
 
-**Point와 Item은 여기서 지급하지 않는다.** 프론트는 완료 Routine에 `pointClaim.claimable/rewardPoints`를 표시할 수 있다.
+**Point와 Item은 여기서 지급하지 않는다.** 프론트는 `TO_DO`가 아닌 완료 Routine에 `pointClaim.claimable/rewardPoints`를 표시할 수 있다. `TO_DO`는 `claimable=false`, `rewardPoints=null`이다.
 
 Point Claim Transaction은 별도 Endpoint에서 수행한다.
 
@@ -1929,6 +1964,7 @@ Body 없음. Point 값은 클라이언트가 보내지 않는다.
 ```text
 DailyRoutine 소유권 확인
 RoutineVerification 존재
+DailyRoutine.category != TO_DO
 server current serviceDate == DailyRoutine.serviceDate
 해당 DailyRoutine PointClaim 없음
 해당 serviceDate 기존 PointClaim count < 3
@@ -1970,6 +2006,7 @@ Item이 없거나 milestone이 아니면 `itemUnlock`은 `null` 또는 `newlyUnl
 ### 오류
 
 - `ROUTINE_NOT_COMPLETED`
+- `POINT_CLAIM_NOT_ELIGIBLE` (`TO_DO`)
 - `POINT_ALREADY_CLAIMED`
 - `POINT_CLAIM_LIMIT_REACHED`
 - `POINT_CLAIM_EXPIRED`
@@ -2357,7 +2394,8 @@ v4.1 API 기본안:
 이유:
 
 - 서로 다른 Routine을 같은 시간대에 수행할 수 있음
-- 하루 성공은 모든 DailyRoutine 완료가 기준이므로 중복 Routine이 보상 악용에 유리하지 않음
+- 하루 성공은 `category != TO_DO` DailyRoutine 전체 완료를 기준으로 하며, `TO_DO`는 Point/Story/Competition 보상 계산에서 제외됨
+- Point Claim은 serviceDate당 최대 3개이므로 시간 겹침 여부 자체를 별도 보상 제한 규칙으로 사용하지 않음
 - DB에 시간 UNIQUE를 추가할 필요가 없음
 - 이후 정책 변경 시 Service validation만 추가 가능
 
@@ -2615,8 +2653,9 @@ demoMode
 ## 29.1 PHOTO/CHECK Point — 확정
 
 ```text
-PHOTO 완료 Routine Claim → 10P
-CHECK 완료 Routine Claim → 5P
+`TO_DO` 제외 PHOTO 완료 Routine Claim → 10P
+`TO_DO` 제외 CHECK 완료 Routine Claim → 5P
+`TO_DO` → Point Claim 비대상
 serviceDate당 최대 3개
 인증 성공 즉시 자동 지급 X
 당일에만 Claim
@@ -2956,17 +2995,18 @@ GET /daily-routines
 
 ```text
 POST CHECK verification
-→ DailySuccess
+→ `TO_DO`면 완료 기록만 저장
+→ 그 외 카테고리면 DailySuccess
 → Story Unlock
 → Avatar Stage 변경
 
-POST point-claim
+`TO_DO` 제외 POST point-claim
 → RoutinePointClaim
 → 누적 Point
 → 100P Item Unlock
 ```
 
-사진 AI 없이 먼저 `Routine → 인증 → 하루 성공/Story → Point Claim/Item`을 끝까지 검증한다.
+사진 AI 없이 먼저 `Routine → 인증 → (TO_DO 제외) 하루 성공/Story → (TO_DO 제외) Point Claim/Item`을 끝까지 검증한다.
 
 ## Phase 4 — Speech / Home
 
@@ -3110,11 +3150,11 @@ API Spec v4.3
 
 15. Verification 성공 Transaction은 DailySuccess/Story/Avatar Stage를 처리하고 Point/Item을 자동 지급하지 않음.
 
-16. Point Claim은 PHOTO 10P / CHECK 5P, 해당 serviceDate 당일, 사용자당 하루 최대 3개.
+16. Point Claim은 `TO_DO` 제외 완료 Routine만 가능하며 PHOTO 10P / CHECK 5P, 해당 serviceDate 당일, 사용자당 하루 최대 3개. `TO_DO`는 `POINT_CLAIM_NOT_ELIGIBLE`로 거부한다.
 
 17. Item Unlock은 Point Claim 후 누적 획득 Point 100/200/300/... milestone에서 처리하며 Point 차감 없음.
 
-18. Competition은 Asia/Seoul 달력 월의 Point Claim 합계, 동점 공동 순위.
+18. Competition은 Asia/Seoul 달력 월의 Point Claim 합계, 동점 공동 순위. `TO_DO`는 Point Claim이 없으므로 자동 제외된다.
 
 19. Story Unlock은 연속 하루 성공 10/20/30/40/50 → EP.1~EP.5, 영구 해금.
 
@@ -3189,4 +3229,3 @@ GET    /competition/leaderboard?month=YYYY-MM
 총 **35개 Endpoint**를 기본 계약으로 한다.
 
 실제 저장소에 이미 동등한 의미의 안정적인 Endpoint가 있다면 단순 naming 차이만으로 불필요하게 갈아엎지 않는다. 다만 제품 정책과 데이터 Source of Truth는 본 v4.3을 기준으로 맞춘다.
-

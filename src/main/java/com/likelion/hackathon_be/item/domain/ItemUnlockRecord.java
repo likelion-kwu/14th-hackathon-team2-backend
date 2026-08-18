@@ -31,6 +31,20 @@ public class ItemUnlockRecord {
     protected ItemUnlockRecord() {
     }
 
+    public static ItemUnlockRecord create(
+            Long userId,
+            int requiredPoints,
+            Long itemId,
+            Instant processedAt
+    ) {
+        ItemUnlockRecord record = new ItemUnlockRecord();
+        record.userId = userId;
+        record.requiredPoints = requiredPoints;
+        record.itemId = itemId;
+        record.processedAt = processedAt;
+        return record;
+    }
+
     public Long getId() {
         return id;
     }

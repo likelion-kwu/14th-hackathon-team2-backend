@@ -46,6 +46,30 @@ public class AvatarDialogue {
     protected AvatarDialogue() {
     }
 
+    public static AvatarDialogue create(
+            Long profileId,
+            DialogueSituation situation,
+            String content,
+            boolean containsUserName,
+            boolean containsProfanity,
+            Instant now
+    ) {
+        AvatarDialogue dialogue = new AvatarDialogue();
+        dialogue.profileId = profileId;
+        dialogue.situation = situation;
+        dialogue.content = content;
+        dialogue.containsUserName = containsUserName;
+        dialogue.containsProfanity = containsProfanity;
+        dialogue.useCount = 0;
+        dialogue.createdAt = now;
+        return dialogue;
+    }
+
+    public void recordUse(Instant now) {
+        this.lastUsedAt = now;
+        this.useCount++;
+    }
+
     public Long getId() {
         return id;
     }
