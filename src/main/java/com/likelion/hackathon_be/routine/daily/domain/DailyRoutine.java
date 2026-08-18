@@ -13,6 +13,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.Objects;
 
 @Entity
 @Table(name = "daily_routines")
@@ -113,6 +114,16 @@ public class DailyRoutine {
 
     public Long getMissionTemplateId() {
         return missionTemplateId;
+    }
+
+    public void assignMissionTemplate(Long missionTemplateId, Instant now) {
+        Objects.requireNonNull(missionTemplateId, "missionTemplateId must not be null");
+        Objects.requireNonNull(now, "now must not be null");
+        if (this.missionTemplateId != null) {
+            throw new IllegalStateException("Photo mission is already assigned");
+        }
+        this.missionTemplateId = missionTemplateId;
+        this.updatedAt = now;
     }
 
     public Instant getCreatedAt() {

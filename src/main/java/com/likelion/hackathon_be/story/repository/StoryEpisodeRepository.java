@@ -7,4 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface StoryEpisodeRepository extends JpaRepository<StoryEpisode, Long> {
 
     List<StoryEpisode> findByActiveTrueOrderByRequiredStreakAscEpisodeNumberAsc();
+
+    List<StoryEpisode> findByActiveTrueOrderByEpisodeNumberAsc();
 }
