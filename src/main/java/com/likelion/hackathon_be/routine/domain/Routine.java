@@ -83,6 +83,31 @@ public class Routine {
         return routine;
     }
 
+    public void update(
+            RoutineCategory category,
+            String content,
+            LocalTime startTime,
+            LocalTime endTime,
+            RepeatType repeatType,
+            String verificationObject,
+            LocalDate effectiveFrom,
+            Instant now
+    ) {
+        this.category = category;
+        this.content = content;
+        this.startTime = startTime;
+        this.endTime = endTime;
+        this.repeatType = repeatType;
+        this.verificationObject = verificationObject;
+        this.effectiveFrom = effectiveFrom;
+        this.updatedAt = now;
+    }
+
+    public void softDelete(Instant now) {
+        this.deletedAt = now;
+        this.updatedAt = now;
+    }
+
     public Long getId() {
         return id;
     }
