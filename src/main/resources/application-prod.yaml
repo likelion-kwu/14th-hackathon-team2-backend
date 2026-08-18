@@ -1,0 +1,3 @@
+app:
+  avatar:
+    storage-root: ${AVATAR_STORAGE_ROOT}

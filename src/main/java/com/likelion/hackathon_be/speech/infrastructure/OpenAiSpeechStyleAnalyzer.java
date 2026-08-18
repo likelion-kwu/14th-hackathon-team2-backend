@@ -64,10 +64,10 @@ public class OpenAiSpeechStyleAnalyzer {
         List<SpeechExampleCandidate> examples = requestValidated(
                 "speech_style_examples",
                 exampleInstructions(),
-                secondInput(parsed, data),
+                secondInput(parsed),
                 exampleSchema,
                 1800,
-                this::parseExamples
+                response -> parseExamples(response, parsed.candidates)
         );
         SpeechProfileCandidate candidate = new SpeechProfileCandidate(
                 SpeechSourceType.KAKAO_CHAT,
@@ -162,26 +162,47 @@ public class OpenAiSpeechStyleAnalyzer {
                         "content", message.userMessage()
                 )));
             }
-            String styleJson = sanitizedStyleJson(profile, data.observedProfanity());
+            String styleJson = sanitizedStyleJson(profile, data);
             return new ParsedAnalysis(settings, styleJson, List.copyOf(candidates));
         } catch (RuntimeException exception) {
             throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
         }
     }
 
-    private List<SpeechExampleCandidate> parseExamples(JsonNode root) {
+    private List<SpeechExampleCandidate> parseExamples(
+            JsonNode root,
+            List<Map<String, String>> candidates
+    ) {
         List<SpeechExampleCandidate> examples = new ArrayList<>();
         Set<String> unique = new HashSet<>();
+        Map<String, SpeechExampleCategory> userCandidates = new HashMap<>();
+        for (Map<String, String> candidate : candidates) {
+            userCandidates.put(
+                    normalize(candidate.get("content")),
+                    SpeechExampleCategory.valueOf(candidate.get("category"))
+            );
+        }
         try {
             for (JsonNode node : root.path("examples")) {
                 String content = requiredText(node, "content").trim();
-                if (content.isEmpty() || content.length() > 50 || containsForbidden(content)
-                        || PII.matcher(content).find() || !unique.add(content)) {
+                String normalized = normalize(content);
+                SpeechExampleCategory category = SpeechExampleCategory.valueOf(requiredText(node, "category"));
+                SpeechExampleSourceType sourceType = SpeechExampleSourceType.valueOf(requiredText(node, "sourceType"));
+                if (content.isEmpty() || codePointLength(content) > 50 || containsForbidden(content)
+                        || PII.matcher(content).find() || !unique.add(normalized)) {
                     throw new IllegalArgumentException("Invalid representative example");
                 }
+                SpeechExampleCategory actualCategory = userCandidates.get(normalized);
+                if (sourceType == SpeechExampleSourceType.USER_MESSAGE
+                        && (actualCategory == null || actualCategory != category)) {
+                    throw new IllegalArgumentException("USER_MESSAGE example was not selected from candidates");
+                }
+                if (sourceType == SpeechExampleSourceType.AI_GENERATED && actualCategory != null) {
+                    throw new IllegalArgumentException("Existing user candidate must retain USER_MESSAGE provenance");
+                }
                 examples.add(new SpeechExampleCandidate(
-                        SpeechExampleCategory.valueOf(requiredText(node, "category")),
-                        SpeechExampleSourceType.valueOf(requiredText(node, "sourceType")),
+                        category,
+                        sourceType,
                         content
                 ));
                 if (examples.size() == 20) {
@@ -197,17 +218,10 @@ public class OpenAiSpeechStyleAnalyzer {
         }
     }
 
-    private String sanitizedStyleJson(JsonNode profile, Set<String> observedProfanity) {
+    private String sanitizedStyleJson(JsonNode profile, PreprocessedSpeechData data) {
         Map<String, Object> style = new LinkedHashMap<>();
-        for (String field : List.of(
-                "speechLevel", "sentenceLength", "directness", "warmth", "playfulness", "emotionalIntensity"
-        )) {
-            style.put(field, requiredText(profile, field));
-        }
         for (String field : List.of("openingPatterns", "endingPatterns", "reactionPatterns", "avoidPatterns")) {
-            List<String> values = new ArrayList<>();
-            profile.path(field).forEach(value -> values.add(value.asText()));
-            style.put(field, values);
+            style.put(field, safePatternValues(profile.path(field)));
         }
         Map<String, String> punctuation = new LinkedHashMap<>();
         JsonNode punctuationNode = profile.path("punctuationStyle");
@@ -215,11 +229,13 @@ public class OpenAiSpeechStyleAnalyzer {
             punctuation.put(field, requiredText(punctuationNode, field));
         }
         style.put("punctuationStyle", punctuation);
+        Set<String> safeObserved = new HashSet<>(data.observedProfanity());
+        safeObserved.retainAll(SAFE_SELF_DIRECTED_PROFANITY);
         style.put("profanity", Map.of(
-                "detected", !observedProfanity.isEmpty(),
+                "detected", !data.observedProfanity().isEmpty(),
                 "enabledByUser", false,
-                "observedFrequency", observedProfanity.isEmpty() ? "NONE" : "LOW",
-                "allowedExpressions", observedProfanity
+                "observedFrequency", profanityFrequency(data),
+                "allowedExpressions", safeObserved
         ));
         style.put("personalInsultAllowed", false);
         return objectMapper.writeValueAsString(style);
@@ -229,13 +245,14 @@ public class OpenAiSpeechStyleAnalyzer {
         return objectMapper.writeValueAsString(Map.of(
                 "messages", data.messages(),
                 "repetitionCounts", data.repetitionCounts(),
-                "serverObservedProfanity", data.observedProfanity()
+                "serverObservedProfanityCounts", data.observedProfanityCounts()
         ));
     }
 
-    private String secondInput(ParsedAnalysis analysis, PreprocessedSpeechData data) {
+    private String secondInput(ParsedAnalysis analysis) {
         return objectMapper.writeValueAsString(Map.of(
                 "styleJson", analysis.styleJson,
+                "settings", analysis.settings,
                 "candidates", analysis.candidates,
                 "maximumExamples", 20,
                 "maximumCharacters", 50
@@ -244,6 +261,44 @@ public class OpenAiSpeechStyleAnalyzer {
 
     private boolean containsForbidden(String content) {
         return FORBIDDEN.stream().anyMatch(content::contains);
+    }
+
+    private List<String> safePatternValues(JsonNode node) {
+        List<String> values = new ArrayList<>();
+        Set<String> unique = new HashSet<>();
+        for (JsonNode value : node) {
+            if (!value.isTextual()) {
+                throw new IllegalArgumentException("Style pattern must be text");
+            }
+            String text = value.asText().trim();
+            String normalized = normalize(text);
+            if (text.isBlank() || codePointLength(text) > 50 || PII.matcher(text).find()
+                    || containsForbidden(text) || !unique.add(normalized)) {
+                throw new IllegalArgumentException("Invalid style pattern");
+            }
+            values.add(text);
+        }
+        return List.copyOf(values);
+    }
+
+    private String profanityFrequency(PreprocessedSpeechData data) {
+        int count = data.observedProfanityCounts().values().stream().mapToInt(Integer::intValue).sum();
+        if (count == 0) {
+            return "NONE";
+        }
+        double ratio = (double) count / Math.max(1, data.validMessageCount());
+        if (ratio <= 0.01) {
+            return "LOW";
+        }
+        return ratio <= 0.05 ? "MEDIUM" : "HIGH";
+    }
+
+    private String normalize(String value) {
+        return value.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private int codePointLength(String value) {
+        return value.codePointCount(0, value.length());
     }
 
     private String requiredText(JsonNode node, String field) {

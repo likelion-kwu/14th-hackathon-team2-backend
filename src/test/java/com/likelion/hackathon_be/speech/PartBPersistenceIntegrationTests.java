@@ -71,7 +71,9 @@ class PartBPersistenceIntegrationTests {
         profileActivator.activate(user.getId(), candidate, dialogues("첫"));
         Long profileId = profileRepository.findByUserId(user.getId()).orElseThrow().getId();
         assertThat(dialogueRepository.countByProfileId(profileId)).isEqualTo(40);
-        assertThat(profileRepository.findById(profileId).orElseThrow().getStyleJson()).contains("speechLevel");
+        assertThat(profileRepository.findById(profileId).orElseThrow().getStyleJson())
+                .contains("openingPatterns")
+                .doesNotContain("speechLevel", "sentenceLength", "directness");
 
         profileActivator.activate(user.getId(), candidate, dialogues("새"));
         assertThat(profileRepository.findByUserId(user.getId()).orElseThrow().getId()).isEqualTo(profileId);
@@ -110,7 +112,7 @@ class PartBPersistenceIntegrationTests {
                 SpeechSourceType.PRESET,
                 "CALM",
                 settings,
-                "{\"speechLevel\":\"BANMAL\"}",
+                "{\"openingPatterns\":[\"근데\"],\"personalInsultAllowed\":false}",
                 false,
                 null,
                 List.of()

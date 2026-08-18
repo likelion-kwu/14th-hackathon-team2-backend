@@ -140,7 +140,9 @@ public class DefaultSpeechStyleService implements SpeechStyleService {
                 null,
                 List.of()
         );
-        List<DialogueCandidate> dialogues = dialogueGenerator.generate(candidate, user.getNickname(), Set.of());
+        List<DialogueCandidate> dialogues = profileRepository.existsByUserId(userId)
+                ? dialogueGenerator.generateStrict(candidate, user.getNickname(), Set.of())
+                : dialogueGenerator.generateWithSafeFallback(candidate, user.getNickname(), Set.of());
         profileActivator.activate(userId, candidate, dialogues);
         jobInvalidator.invalidateUnfinished(userId);
         return new ApplySpeechPresetResponse(
@@ -183,7 +185,11 @@ public class DefaultSpeechStyleService implements SpeechStyleService {
         );
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
-        List<DialogueCandidate> dialogues = dialogueGenerator.generate(candidate, user.getNickname(), allowedProfanity);
+        List<DialogueCandidate> dialogues = dialogueGenerator.generateStrict(
+                candidate,
+                user.getNickname(),
+                allowedProfanity
+        );
         profileActivator.activate(userId, candidate, dialogues);
         jobInvalidator.invalidateUnfinished(userId);
         return new UpdateSpeechStyleResponse(settings.toResponse(), dialogues.size());
@@ -205,12 +211,6 @@ public class DefaultSpeechStyleService implements SpeechStyleService {
             String previousJson
     ) {
         Map<String, Object> style = new LinkedHashMap<>();
-        style.put("speechLevel", settings.speechLevel().name());
-        style.put("sentenceLength", settings.sentenceLength().name());
-        style.put("directness", settings.directness().name());
-        style.put("warmth", settings.warmth().name());
-        style.put("playfulness", settings.playfulness().name());
-        style.put("emotionalIntensity", settings.emotionalIntensity().name());
         if (previousJson != null) {
             try {
                 JsonNode previous = objectMapper.readTree(previousJson);
