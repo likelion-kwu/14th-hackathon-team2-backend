@@ -45,6 +45,33 @@ public class Avatar {
     protected Avatar() {
     }
 
+    public static Avatar create(
+            Long userId,
+            AvatarGrowthTrack growthTrack,
+            String assetSetKey,
+            AvatarAssetSource assetSource,
+            Instant now
+    ) {
+        Avatar avatar = new Avatar();
+        avatar.userId = userId;
+        avatar.growthTrack = growthTrack;
+        avatar.assetSetKey = assetSetKey;
+        avatar.assetSource = assetSource;
+        avatar.regenerationCount = 0;
+        avatar.createdAt = now;
+        avatar.updatedAt = now;
+        return avatar;
+    }
+
+    public void replaceAssetSet(String assetSetKey, AvatarAssetSource assetSource, boolean regeneration, Instant now) {
+        this.assetSetKey = assetSetKey;
+        this.assetSource = assetSource;
+        if (regeneration) {
+            this.regenerationCount++;
+        }
+        this.updatedAt = now;
+    }
+
     public Long getId() {
         return id;
     }

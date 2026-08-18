@@ -1,0 +1,334 @@
+package com.likelion.hackathon_be.speech.infrastructure;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.regex.Pattern;
+
+import com.likelion.hackathon_be.ai.openai.OpenAiGateway;
+import com.likelion.hackathon_be.ai.openai.OpenAiGatewayException;
+import com.likelion.hackathon_be.common.error.BusinessException;
+import com.likelion.hackathon_be.common.error.ErrorCode;
+import com.likelion.hackathon_be.speech.application.SpeechExampleCandidate;
+import com.likelion.hackathon_be.speech.application.SpeechProfileCandidate;
+import com.likelion.hackathon_be.speech.application.SpeechStyleSettings;
+import com.likelion.hackathon_be.speech.domain.SentenceLength;
+import com.likelion.hackathon_be.speech.domain.SpeechAttributeLevel;
+import com.likelion.hackathon_be.speech.domain.SpeechExampleCategory;
+import com.likelion.hackathon_be.speech.domain.SpeechExampleSourceType;
+import com.likelion.hackathon_be.speech.domain.SpeechLevel;
+import com.likelion.hackathon_be.speech.domain.SpeechSourceType;
+import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+@Component
+public class OpenAiSpeechStyleAnalyzer {
+    private static final String PROMPT_VERSION = "kakao-style-analysis-v1";
+    private static final Set<String> FORBIDDEN = Set.of("죽어", "자해", "협박", "혐오", "쓸모없", "병신");
+    private static final Set<String> SAFE_SELF_DIRECTED_PROFANITY = Set.of("씨발", "시발", "ㅅㅂ");
+    private static final Pattern PII = Pattern.compile(
+            "(?i)(?:https?://|www\\.|[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|"
+                    + "01[016789][- ]?\\d{3,4}[- ]?\\d{4}|(?:\\d[- ]?){9,15}\\d)"
+    );
+
+    private final OpenAiGateway gateway;
+    private final ObjectMapper objectMapper;
+    private final JsonNode analysisSchema;
+    private final JsonNode exampleSchema;
+
+    public OpenAiSpeechStyleAnalyzer(OpenAiGateway gateway, ObjectMapper objectMapper) {
+        this.gateway = gateway;
+        this.objectMapper = objectMapper;
+        this.analysisSchema = objectMapper.readTree(analysisSchemaText());
+        this.exampleSchema = objectMapper.readTree(exampleSchemaText());
+    }
+
+    public AnalyzedSpeechProfile analyze(PreprocessedSpeechData data) {
+        if (!gateway.isAvailable()) {
+            throw new BusinessException(ErrorCode.AI_ANALYSIS_FAILED);
+        }
+        ParsedAnalysis parsed = requestValidated(
+                "speech_style_analysis",
+                analysisInstructions(),
+                firstInput(data),
+                analysisSchema,
+                3000,
+                response -> parseAnalysis(response, data)
+        );
+        List<SpeechExampleCandidate> examples = requestValidated(
+                "speech_style_examples",
+                exampleInstructions(),
+                secondInput(parsed, data),
+                exampleSchema,
+                1800,
+                this::parseExamples
+        );
+        SpeechProfileCandidate candidate = new SpeechProfileCandidate(
+                SpeechSourceType.KAKAO_CHAT,
+                null,
+                parsed.settings,
+                parsed.styleJson,
+                !data.observedProfanity().isEmpty(),
+                data.validMessageCount(),
+                examples
+        );
+        Set<String> allowed = new HashSet<>(data.observedProfanity());
+        allowed.retainAll(SAFE_SELF_DIRECTED_PROFANITY);
+        return new AnalyzedSpeechProfile(candidate, allowed);
+    }
+
+    private <T> T requestValidated(
+            String schemaName,
+            String instructions,
+            String input,
+            JsonNode schema,
+            int maxTokens,
+            Function<JsonNode, T> validator
+    ) {
+        RuntimeException last = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                JsonNode response = gateway.structuredResponse(
+                        schemaName,
+                        PROMPT_VERSION,
+                        instructions,
+                        attempt == 0 ? input : input + "\nThe previous output was invalid. Follow the schema exactly.",
+                        List.of(),
+                        schema,
+                        maxTokens
+                );
+                return validator.apply(response);
+            } catch (OpenAiGatewayException exception) {
+                last = exception;
+                if (exception.kind() != OpenAiGatewayException.Kind.INVALID_RESPONSE) {
+                    throw new BusinessException(ErrorCode.AI_ANALYSIS_FAILED);
+                }
+            } catch (BusinessException exception) {
+                last = exception;
+                if (exception.getErrorCode() != ErrorCode.AI_RESPONSE_INVALID) {
+                    throw exception;
+                }
+            } catch (RuntimeException exception) {
+                last = exception;
+            }
+        }
+        throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID, last == null ? "Invalid AI response" : last.getMessage());
+    }
+
+    private ParsedAnalysis parseAnalysis(JsonNode root, PreprocessedSpeechData data) {
+        try {
+            JsonNode profile = root.path("profile");
+            SpeechStyleSettings settings = new SpeechStyleSettings(
+                    SpeechLevel.valueOf(requiredText(profile, "speechLevel")),
+                    SentenceLength.valueOf(requiredText(profile, "sentenceLength")),
+                    SpeechAttributeLevel.valueOf(requiredText(profile, "directness")),
+                    SpeechAttributeLevel.valueOf(requiredText(profile, "warmth")),
+                    SpeechAttributeLevel.valueOf(requiredText(profile, "playfulness")),
+                    SpeechAttributeLevel.valueOf(requiredText(profile, "emotionalIntensity")),
+                    false
+            );
+            Map<String, PreprocessedSpeechMessage> byId = new HashMap<>();
+            data.messages().forEach(message -> byId.put(message.id(), message));
+            List<Map<String, String>> candidates = new ArrayList<>();
+            Set<String> ids = new HashSet<>();
+            Set<String> candidateContents = new HashSet<>();
+            for (JsonNode candidate : root.path("candidates")) {
+                String id = requiredText(candidate, "messageId");
+                String category = requiredText(candidate, "category");
+                SpeechExampleCategory.valueOf(category);
+                if (byId.containsKey(id)
+                        && ids.add(id)
+                        && candidateContents.add(byId.get(id).userMessage().replaceAll("\\s+", ""))) {
+                    candidates.add(Map.of(
+                            "messageId", id,
+                            "category", category,
+                            "content", byId.get(id).userMessage()
+                    ));
+                }
+                if (candidates.size() == 60) {
+                    break;
+                }
+            }
+            if (candidates.isEmpty()) {
+                data.messages().stream().limit(20).forEach(message -> candidates.add(Map.of(
+                        "messageId", message.id(),
+                        "category", SpeechExampleCategory.GENERAL.name(),
+                        "content", message.userMessage()
+                )));
+            }
+            String styleJson = sanitizedStyleJson(profile, data.observedProfanity());
+            return new ParsedAnalysis(settings, styleJson, List.copyOf(candidates));
+        } catch (RuntimeException exception) {
+            throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
+        }
+    }
+
+    private List<SpeechExampleCandidate> parseExamples(JsonNode root) {
+        List<SpeechExampleCandidate> examples = new ArrayList<>();
+        Set<String> unique = new HashSet<>();
+        try {
+            for (JsonNode node : root.path("examples")) {
+                String content = requiredText(node, "content").trim();
+                if (content.isEmpty() || content.length() > 50 || containsForbidden(content)
+                        || PII.matcher(content).find() || !unique.add(content)) {
+                    throw new IllegalArgumentException("Invalid representative example");
+                }
+                examples.add(new SpeechExampleCandidate(
+                        SpeechExampleCategory.valueOf(requiredText(node, "category")),
+                        SpeechExampleSourceType.valueOf(requiredText(node, "sourceType")),
+                        content
+                ));
+                if (examples.size() == 20) {
+                    break;
+                }
+            }
+            if (examples.isEmpty()) {
+                throw new IllegalArgumentException("No representative examples");
+            }
+            return List.copyOf(examples);
+        } catch (RuntimeException exception) {
+            throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
+        }
+    }
+
+    private String sanitizedStyleJson(JsonNode profile, Set<String> observedProfanity) {
+        Map<String, Object> style = new LinkedHashMap<>();
+        for (String field : List.of(
+                "speechLevel", "sentenceLength", "directness", "warmth", "playfulness", "emotionalIntensity"
+        )) {
+            style.put(field, requiredText(profile, field));
+        }
+        for (String field : List.of("openingPatterns", "endingPatterns", "reactionPatterns", "avoidPatterns")) {
+            List<String> values = new ArrayList<>();
+            profile.path(field).forEach(value -> values.add(value.asText()));
+            style.put(field, values);
+        }
+        Map<String, String> punctuation = new LinkedHashMap<>();
+        JsonNode punctuationNode = profile.path("punctuationStyle");
+        for (String field : List.of("period", "questionMark", "exclamationMark", "repetition")) {
+            punctuation.put(field, requiredText(punctuationNode, field));
+        }
+        style.put("punctuationStyle", punctuation);
+        style.put("profanity", Map.of(
+                "detected", !observedProfanity.isEmpty(),
+                "enabledByUser", false,
+                "observedFrequency", observedProfanity.isEmpty() ? "NONE" : "LOW",
+                "allowedExpressions", observedProfanity
+        ));
+        style.put("personalInsultAllowed", false);
+        return objectMapper.writeValueAsString(style);
+    }
+
+    private String firstInput(PreprocessedSpeechData data) {
+        return objectMapper.writeValueAsString(Map.of(
+                "messages", data.messages(),
+                "repetitionCounts", data.repetitionCounts(),
+                "serverObservedProfanity", data.observedProfanity()
+        ));
+    }
+
+    private String secondInput(ParsedAnalysis analysis, PreprocessedSpeechData data) {
+        return objectMapper.writeValueAsString(Map.of(
+                "styleJson", analysis.styleJson,
+                "candidates", analysis.candidates,
+                "maximumExamples", 20,
+                "maximumCharacters", 50
+        ));
+    }
+
+    private boolean containsForbidden(String content) {
+        return FORBIDDEN.stream().anyMatch(content::contains);
+    }
+
+    private String requiredText(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        if (value == null || !value.isTextual() || value.asText().isBlank()) {
+            throw new IllegalArgumentException("Missing field: " + field);
+        }
+        return value.asText();
+    }
+
+    private String analysisInstructions() {
+        return """
+                Analyze Korean writing style only. Context is only for understanding userMessage; never learn or
+                copy the context speaker's style. Do not infer personality, identity, health, mental state, age,
+                gender, ethnicity, or other sensitive traits. Classify representative user message IDs, and never
+                invent profanity. Return only the strict schema.
+                """;
+    }
+
+    private String exampleInstructions() {
+        return """
+                Select at most 20 safe Korean representative style examples from the compressed candidates.
+                Prefer USER_MESSAGE; use AI_GENERATED only to fill a missing category. Each content is non-empty,
+                distinct, at most 50 characters, contains no personal data, threats, hate, self-harm encouragement,
+                or personal attack. Return only the strict schema.
+                """;
+    }
+
+    private String analysisSchemaText() {
+        return """
+                {
+                  "type":"object","additionalProperties":false,
+                  "properties":{
+                    "profile":{"type":"object","additionalProperties":false,"properties":{
+                      "speechLevel":{"type":"string","enum":["BANMAL","JONDAEMAL"]},
+                      "sentenceLength":{"type":"string","enum":["SHORT","MEDIUM","LONG"]},
+                      "directness":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},
+                      "warmth":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},
+                      "playfulness":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},
+                      "emotionalIntensity":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},
+                      "openingPatterns":{"type":"array","maxItems":10,"items":{"type":"string"}},
+                      "endingPatterns":{"type":"array","maxItems":10,"items":{"type":"string"}},
+                      "reactionPatterns":{"type":"array","maxItems":10,"items":{"type":"string"}},
+                      "avoidPatterns":{"type":"array","maxItems":10,"items":{"type":"string"}},
+                      "punctuationStyle":{"type":"object","additionalProperties":false,"properties":{
+                        "period":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},
+                        "questionMark":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},
+                        "exclamationMark":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},
+                        "repetition":{"type":"string","enum":["LOW","MEDIUM","HIGH"]}
+                      },"required":["period","questionMark","exclamationMark","repetition"]}
+                    },"required":["speechLevel","sentenceLength","directness","warmth","playfulness",
+                      "emotionalIntensity","openingPatterns","endingPatterns","reactionPatterns","avoidPatterns",
+                      "punctuationStyle"]},
+                    "candidates":{"type":"array","maxItems":60,"items":{"type":"object",
+                      "additionalProperties":false,"properties":{
+                        "messageId":{"type":"string"},
+                        "category":{"type":"string","enum":["QUESTION","AGREEMENT","DISAGREEMENT",
+                          "ENCOURAGEMENT","REACTION","GENERAL"]}
+                      },"required":["messageId","category"]}}
+                  },
+                  "required":["profile","candidates"]
+                }
+                """;
+    }
+
+    private String exampleSchemaText() {
+        return """
+                {
+                  "type":"object","additionalProperties":false,
+                  "properties":{"examples":{"type":"array","minItems":1,"maxItems":20,"items":{
+                    "type":"object","additionalProperties":false,"properties":{
+                      "category":{"type":"string","enum":["QUESTION","AGREEMENT","DISAGREEMENT",
+                        "ENCOURAGEMENT","REACTION","GENERAL"]},
+                      "sourceType":{"type":"string","enum":["USER_MESSAGE","AI_GENERATED"]},
+                      "content":{"type":"string"}
+                    },"required":["category","sourceType","content"]
+                  }}},"required":["examples"]
+                }
+                """;
+    }
+
+    private record ParsedAnalysis(
+            SpeechStyleSettings settings,
+            String styleJson,
+            List<Map<String, String>> candidates
+    ) {
+    }
+}

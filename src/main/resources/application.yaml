@@ -10,3 +10,22 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 21MB
+
+app:
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      responses-model: ${OPENAI_RESPONSES_MODEL:gpt-5.6-luna}
+      image-model: ${OPENAI_IMAGE_MODEL:gpt-image-2}
+      connect-timeout: 10s
+      response-timeout: 60s
+      image-timeout: 240s
+  avatar:
+    storage-root: ${AVATAR_STORAGE_ROOT:${java.io.tmpdir}/godsaeng-lion/avatar}
+  speech:
+    work-root: ${SPEECH_WORK_ROOT:${java.io.tmpdir}/godsaeng-lion/speech}

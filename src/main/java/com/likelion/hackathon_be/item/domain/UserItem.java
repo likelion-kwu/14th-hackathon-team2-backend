@@ -31,6 +31,10 @@ public class UserItem {
     protected UserItem() {
     }
 
+    public void setEquipped(boolean equipped) {
+        this.equipped = equipped;
+    }
+
     public Long getId() {
         return id;
     }
