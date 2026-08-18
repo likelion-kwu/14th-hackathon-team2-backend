@@ -9,12 +9,19 @@ import java.util.List;
 import java.util.Map;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -58,7 +65,7 @@ public class RestOpenAiGateway implements OpenAiGateway {
             content.add(Map.of(
                     "type", "input_image",
                     "image_url", image.dataUrl(),
-                    "detail", "low"
+                    "detail", image.detail()
             ));
         }
 
@@ -83,8 +90,10 @@ public class RestOpenAiGateway implements OpenAiGateway {
                 promptVersion,
                 responsesClient,
                 "/v1/responses",
-                body
+                body,
+                MediaType.APPLICATION_JSON
         );
+        ensureCompleted(response);
         JsonNode refusal = response.findValue("refusal");
         if (refusal != null && !refusal.isNull() && !refusal.asText().isBlank()) {
             throw new OpenAiGatewayException(OpenAiGatewayException.Kind.REFUSED, "OpenAI refused the request");
@@ -114,17 +123,23 @@ public class RestOpenAiGateway implements OpenAiGateway {
             String quality
     ) {
         ensureConfigured();
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", properties.imageModel());
-        body.put("prompt", prompt);
-        body.put("images", images.stream().map(image -> Map.of("image_url", image.dataUrl())).toList());
-        if (mask != null) {
-            body.put("mask", Map.of("image_url", mask.dataUrl()));
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("model", properties.imageModel());
+        body.add("prompt", prompt);
+        int inputIndex = 0;
+        for (OpenAiImageInput image : images) {
+            body.add(
+                    "image[]",
+                    imagePart(image, "input-" + inputIndex++ + extension(image.mediaType()))
+            );
         }
-        body.put("size", size);
-        body.put("quality", quality);
-        body.put("output_format", "png");
-        body.put("n", 1);
+        if (mask != null) {
+            body.add("mask", imagePart(mask, "mask" + extension(mask.mediaType())));
+        }
+        body.add("size", size);
+        body.add("quality", quality);
+        body.add("output_format", "png");
+        body.add("n", "1");
 
         JsonNode response = execute(
                 "images.edit",
@@ -132,7 +147,8 @@ public class RestOpenAiGateway implements OpenAiGateway {
                 promptVersion,
                 imagesClient,
                 "/v1/images/edits",
-                body
+                body,
+                MediaType.MULTIPART_FORM_DATA
         );
         JsonNode image = response.path("data").path(0).path("b64_json");
         if (!image.isTextual()) {
@@ -159,7 +175,6 @@ public class RestOpenAiGateway implements OpenAiGateway {
                 .baseUrl(properties.baseUrl())
                 .requestFactory(requestFactory)
                 .defaultHeader("Authorization", "Bearer " + nullToEmpty(properties.apiKey()))
-                .defaultHeader("Content-Type", "application/json")
                 .build();
     }
 
@@ -169,12 +184,18 @@ public class RestOpenAiGateway implements OpenAiGateway {
             String promptVersion,
             RestClient client,
             String uri,
-            Map<String, Object> body
+            Object body,
+            MediaType contentType
     ) {
         long started = System.nanoTime();
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-                ResponseEntity<JsonNode> entity = client.post().uri(uri).body(body).retrieve().toEntity(JsonNode.class);
+                ResponseEntity<JsonNode> entity = client.post()
+                        .uri(uri)
+                        .contentType(contentType)
+                        .body(body)
+                        .retrieve()
+                        .toEntity(JsonNode.class);
                 JsonNode response = entity.getBody();
                 if (response == null) {
                     throw new OpenAiGatewayException(OpenAiGatewayException.Kind.INVALID_RESPONSE, "Empty response");
@@ -213,6 +234,13 @@ public class RestOpenAiGateway implements OpenAiGateway {
                 backoff();
             } catch (ResourceAccessException exception) {
                 if (attempt == MAX_ATTEMPTS) {
+                    log.warn(
+                            "ai_call_failed operation={} model={} promptVersion={} status=NETWORK_ERROR elapsedMs={}",
+                            operation,
+                            model,
+                            promptVersion,
+                            elapsedMillis(started)
+                    );
                     throw new OpenAiGatewayException(
                             OpenAiGatewayException.Kind.UNAVAILABLE,
                             "OpenAI request timed out",
@@ -220,6 +248,19 @@ public class RestOpenAiGateway implements OpenAiGateway {
                     );
                 }
                 backoff();
+            } catch (RestClientException exception) {
+                log.warn(
+                        "ai_call_failed operation={} model={} promptVersion={} status=INVALID_RESPONSE elapsedMs={}",
+                        operation,
+                        model,
+                        promptVersion,
+                        elapsedMillis(started)
+                );
+                throw new OpenAiGatewayException(
+                        OpenAiGatewayException.Kind.INVALID_RESPONSE,
+                        "OpenAI response could not be decoded",
+                        exception
+                );
             }
         }
         throw new OpenAiGatewayException(OpenAiGatewayException.Kind.UNAVAILABLE, "OpenAI request failed");
@@ -234,6 +275,21 @@ public class RestOpenAiGateway implements OpenAiGateway {
             }
         }
         return null;
+    }
+
+    private void ensureCompleted(JsonNode response) {
+        String status = response.path("status").asText("");
+        if ("incomplete".equals(status)) {
+            String reason = response.path("incomplete_details").path("reason").asText("");
+            OpenAiGatewayException.Kind kind = "content_filter".equals(reason)
+                    ? OpenAiGatewayException.Kind.REFUSED
+                    : OpenAiGatewayException.Kind.INVALID_RESPONSE;
+            throw new OpenAiGatewayException(kind, "OpenAI returned an incomplete response");
+        }
+        if ("failed".equals(status)
+                || (!response.path("error").isMissingNode() && !response.path("error").isNull())) {
+            throw new OpenAiGatewayException(OpenAiGatewayException.Kind.UNAVAILABLE, "OpenAI response failed");
+        }
     }
 
     private void ensureConfigured() {
@@ -261,5 +317,29 @@ public class RestOpenAiGateway implements OpenAiGateway {
 
     private String nullToEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private String extension(String mediaType) {
+        return "image/jpeg".equalsIgnoreCase(mediaType) ? ".jpg" : ".png";
+    }
+
+    private HttpEntity<NamedByteArrayResource> imagePart(OpenAiImageInput image, String filename) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(image.mediaType()));
+        return new HttpEntity<>(new NamedByteArrayResource(image.bytes(), filename), headers);
+    }
+
+    private static final class NamedByteArrayResource extends ByteArrayResource {
+        private final String filename;
+
+        private NamedByteArrayResource(byte[] byteArray, String filename) {
+            super(byteArray);
+            this.filename = filename;
+        }
+
+        @Override
+        public String getFilename() {
+            return filename;
+        }
     }
 }

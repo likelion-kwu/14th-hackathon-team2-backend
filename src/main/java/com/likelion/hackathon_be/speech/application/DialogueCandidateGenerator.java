@@ -11,6 +11,9 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import com.likelion.hackathon_be.ai.openai.OpenAiGateway;
+import com.likelion.hackathon_be.ai.openai.OpenAiGatewayException;
+import com.likelion.hackathon_be.common.error.BusinessException;
+import com.likelion.hackathon_be.common.error.ErrorCode;
 import com.likelion.hackathon_be.speech.domain.DialogueSituation;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -47,23 +50,117 @@ public class DialogueCandidateGenerator {
             String userName,
             Set<String> allowedProfanity
     ) {
+        return generate(profile, userName, allowedProfanity, true);
+    }
+
+    public List<DialogueCandidate> generateStrict(
+            SpeechProfileCandidate profile,
+            String userName,
+            Set<String> allowedProfanity
+    ) {
+        return generate(profile, userName, allowedProfanity, false);
+    }
+
+    public List<DialogueCandidate> generateWithSafeFallback(
+            SpeechProfileCandidate profile,
+            String userName,
+            Set<String> allowedProfanity
+    ) {
+        return generate(profile, userName, allowedProfanity);
+    }
+
+    private List<DialogueCandidate> generate(
+            SpeechProfileCandidate profile,
+            String userName,
+            Set<String> allowedProfanity,
+            boolean allowWholeBatchFallback
+    ) {
+        Set<String> effectiveProfanity = profile.settings().profanityEnabled()
+                ? Set.copyOf(allowedProfanity)
+                : Set.of();
         if (!gateway.isAvailable()) {
-            return safeDialogues.all();
+            return fallbackOrThrow(allowWholeBatchFallback, null);
         }
         try {
-            JsonNode response = gateway.structuredResponse(
-                    "avatar_dialogues",
-                    PROMPT_VERSION,
-                    instructions(),
-                    generationInput(profile, userName, allowedProfanity),
-                    List.of(),
-                    batchSchema(),
-                    3600
-            );
-            return validateAndRepair(response, profile, userName, allowedProfanity);
-        } catch (RuntimeException ignored) {
+            JsonNode response = requestBatch(profile, userName, effectiveProfanity);
+            return validateAndRepair(response, profile, userName, effectiveProfanity);
+        } catch (RuntimeException exception) {
+            return fallbackOrThrow(allowWholeBatchFallback, exception);
+        }
+    }
+
+    private JsonNode requestBatch(
+            SpeechProfileCandidate profile,
+            String userName,
+            Set<String> allowedProfanity
+    ) {
+        RuntimeException last = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                JsonNode response = gateway.structuredResponse(
+                        "avatar_dialogues",
+                        PROMPT_VERSION,
+                        instructions(),
+                        generationInput(profile, userName, allowedProfanity)
+                                + (attempt == 0 ? "" : "\nThe previous output was invalid. Follow the schema exactly."),
+                        List.of(),
+                        batchSchema(),
+                        3600
+                );
+                if (!hasExactBatchShape(response)) {
+                    last = new OpenAiGatewayException(
+                            OpenAiGatewayException.Kind.INVALID_RESPONSE,
+                            "Dialogue batch does not match the required 8x5 shape"
+                    );
+                    continue;
+                }
+                return response;
+            } catch (OpenAiGatewayException exception) {
+                last = exception;
+                if (exception.kind() != OpenAiGatewayException.Kind.INVALID_RESPONSE) {
+                    throw exception;
+                }
+            }
+        }
+        throw new BusinessException(
+                ErrorCode.DIALOGUE_GENERATION_FAILED,
+                last == null ? ErrorCode.DIALOGUE_GENERATION_FAILED.defaultMessage() : last.getMessage()
+        );
+    }
+
+    private boolean hasExactBatchShape(JsonNode response) {
+        JsonNode groups = response.path("dialogues");
+        if (!groups.isArray() || groups.size() != DialogueSituation.values().length) {
+            return false;
+        }
+        Set<DialogueSituation> situations = new HashSet<>();
+        for (JsonNode group : groups) {
+            try {
+                DialogueSituation situation = DialogueSituation.valueOf(group.path("situation").asText());
+                JsonNode lines = group.path("lines");
+                if (!situations.add(situation) || !lines.isArray() || lines.size() != 5) {
+                    return false;
+                }
+                for (JsonNode line : lines) {
+                    if (!line.isTextual()) {
+                        return false;
+                    }
+                }
+            } catch (IllegalArgumentException exception) {
+                return false;
+            }
+        }
+        return situations.size() == DialogueSituation.values().length;
+    }
+
+    private List<DialogueCandidate> fallbackOrThrow(boolean allowed, RuntimeException cause) {
+        if (allowed) {
             return safeDialogues.all();
         }
+        throw new BusinessException(
+                ErrorCode.DIALOGUE_GENERATION_FAILED,
+                cause == null ? ErrorCode.DIALOGUE_GENERATION_FAILED.defaultMessage() : cause.getMessage()
+        );
     }
 
     private List<DialogueCandidate> validateAndRepair(
@@ -83,7 +180,7 @@ public class DialogueCandidateGenerator {
                 if (line != null && containsName(line, userName)) {
                     nameCount++;
                 }
-                if (!valid(line, userName, nameCount, used, profile.examples(), allowedProfanity)) {
+                if (!valid(situation, line, userName, nameCount, used, profile.examples(), allowedProfanity)) {
                     failures.put(key(situation, index), "invalid");
                 } else {
                     used.add(normalize(line));
@@ -105,7 +202,15 @@ public class DialogueCandidateGenerator {
                     candidate = repairs.get(key(situation, index));
                 }
                 int nextNameCount = nameCount + (containsName(candidate, userName) ? 1 : 0);
-                if (!valid(candidate, userName, nextNameCount, used, profile.examples(), allowedProfanity)) {
+                if (!valid(
+                        situation,
+                        candidate,
+                        userName,
+                        nextNameCount,
+                        used,
+                        profile.examples(),
+                        allowedProfanity
+                )) {
                     candidate = safeDialogues.line(situation, index);
                     nextNameCount = nameCount;
                 }
@@ -169,6 +274,7 @@ public class DialogueCandidateGenerator {
     }
 
     private boolean valid(
+            DialogueSituation situation,
             String line,
             String userName,
             int nameCount,
@@ -176,11 +282,14 @@ public class DialogueCandidateGenerator {
             List<SpeechExampleCandidate> examples,
             Set<String> allowedProfanity
     ) {
-        if (line == null || line.isBlank() || line.length() > 50 || nameCount > 1) {
+        if (line == null || line.isBlank() || codePointLength(line) > 50 || nameCount > 1) {
             return false;
         }
         String normalized = normalize(line);
-        if (used.contains(normalized) || containsAny(line, ALWAYS_FORBIDDEN) || PII.matcher(line).find()) {
+        if (used.contains(normalized)
+                || containsAny(line, ALWAYS_FORBIDDEN)
+                || PII.matcher(line).find()
+                || !isSituationRelevant(situation, line)) {
             return false;
         }
         for (String profanity : PROFANITY) {
@@ -190,7 +299,7 @@ public class DialogueCandidateGenerator {
         }
         for (SpeechExampleCandidate example : examples) {
             String source = normalize(example.content());
-            if (source.length() >= 8 && (normalized.equals(source) || normalized.contains(source))) {
+            if (codePointLength(source) >= 8 && (normalized.equals(source) || normalized.contains(source))) {
                 return false;
             }
         }
@@ -256,7 +365,7 @@ public class DialogueCandidateGenerator {
         StringBuilder examples = new StringBuilder();
         profile.examples().stream().limit(20).forEach(example -> examples
                 .append(example.category().name()).append(':').append(example.content()).append('\n'));
-        return "User display name: " + (userName == null ? "" : userName)
+        return "User display name: " + usableUserName(userName)
                 + "\nSettings: " + profile.settings()
                 + "\nStyle JSON: " + profile.styleJson()
                 + "\nAllowed profanity: " + allowedProfanity
@@ -264,7 +373,8 @@ public class DialogueCandidateGenerator {
     }
 
     private boolean containsName(String line, String userName) {
-        return line != null && userName != null && !userName.isBlank() && line.contains(userName);
+        String usable = usableUserName(userName);
+        return line != null && !usable.isBlank() && line.contains(usable);
     }
 
     private boolean containsAny(String line, Set<String> terms) {
@@ -280,5 +390,26 @@ public class DialogueCandidateGenerator {
 
     private String key(DialogueSituation situation, int index) {
         return situation.name() + ":" + index;
+    }
+
+    private String usableUserName(String userName) {
+        return userName != null && codePointLength(userName.trim()) >= 2 ? userName.trim() : "";
+    }
+
+    private int codePointLength(String value) {
+        return value.codePointCount(0, value.length());
+    }
+
+    private boolean isSituationRelevant(DialogueSituation situation, String line) {
+        return switch (situation) {
+            case ROUTINE_UPCOMING -> containsAny(line, Set.of("곧", "준비", "시작", "전에", "조금", "하나", "할 일", "숨"));
+            case ROUTINE_AVAILABLE -> containsAny(line, Set.of("지금", "시작", "해보", "루틴", "할 수"));
+            case ROUTINE_REMINDER -> containsAny(line, Set.of("아직", "지금", "하나", "루틴", "해보", "가능", "움직"));
+            case ROUTINE_COMPLETED -> containsAny(line, Set.of("완료", "해냈", "했", "수고", "끝", "오늘", "실천", "흐름"));
+            case ALL_COMPLETED -> containsAny(line, Set.of("다 ", "전부", "오늘", "완료", "끝", "쉬어"));
+            case STREAK_CONTINUED -> containsAny(line, Set.of("연속", "이어", "꾸준", "계속", "유지", "흐름", "쌓", "리듬"));
+            case STREAK_BROKEN -> containsAny(line, Set.of("다시", "괜찮", "쉬", "새로", "오늘", "하나"));
+            case RETURN_AFTER_ABSENCE -> containsAny(line, Set.of("돌아", "다시", "왔", "오랜", "반가", "하나"));
+        };
     }
 }

@@ -37,16 +37,26 @@ public class KakaoMessagePreprocessor {
                 .sorted(Comparator.comparingLong(KakaoMessage::sentAtEpochMilli)
                         .thenComparingLong(KakaoMessage::sequence))
                 .toList();
-        List<GroupedMessage> grouped = splitLongMessages(groupSelected(timeline, selected.displayName()));
-
         Map<String, Integer> repetitions = new HashMap<>();
-        Set<String> observedProfanity = new HashSet<>();
+        Map<String, String> repetitionSamples = new HashMap<>();
+        Map<String, Integer> observedProfanityCounts = new HashMap<>();
+        List<String> participantNames = data.participants().stream().map(KakaoParticipant::displayName).toList();
+        timeline.stream()
+                .filter(message -> message.sender().equals(selected.displayName()))
+                .forEach(message -> {
+                    String masked = mask(message.content(), participantNames, selected.displayName());
+                    String normalized = normalize(masked);
+                    if (!normalized.isBlank()) {
+                        repetitions.merge(normalized, 1, Integer::sum);
+                        repetitionSamples.putIfAbsent(normalized, masked);
+                    }
+                    countProfanity(message.content(), observedProfanityCounts);
+                });
+
+        List<GroupedMessage> grouped = splitLongMessages(groupSelected(timeline, selected.displayName()));
         List<GroupedMessage> valid = new ArrayList<>();
         for (GroupedMessage message : grouped) {
-            String normalized = normalize(message.content());
-            repetitions.merge(normalized, 1, Integer::sum);
-            PROFANITY.stream().filter(message.content()::contains).forEach(observedProfanity::add);
-            if (!isShort(normalized)) {
+            if (message.substantive()) {
                 valid.add(message);
             }
         }
@@ -57,7 +67,6 @@ public class KakaoMessagePreprocessor {
                 .limit(500)
                 .sorted(Comparator.comparingLong(GroupedMessage::sentAtEpochMilli))
                 .toList();
-        List<String> participantNames = data.participants().stream().map(KakaoParticipant::displayName).toList();
         List<PreprocessedSpeechMessage> masked = new ArrayList<>();
         int index = 1;
         for (GroupedMessage message : latest) {
@@ -73,12 +82,12 @@ public class KakaoMessagePreprocessor {
                 .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
                 .limit(30)
                 .forEach(entry -> {
-                    String maskedKey = mask(entry.getKey(), participantNames, selected.displayName());
+                    String maskedKey = repetitionSamples.getOrDefault(entry.getKey(), entry.getKey());
                     if (maskedKey.length() <= 50) {
                         frequent.merge(maskedKey, entry.getValue(), Integer::sum);
                     }
                 });
-        return new PreprocessedSpeechData(masked, validCount, frequent, observedProfanity);
+        return new PreprocessedSpeechData(masked, validCount, frequent, observedProfanityCounts);
     }
 
     private List<GroupedMessage> splitLongMessages(List<GroupedMessage> grouped) {
@@ -95,7 +104,8 @@ public class KakaoMessagePreprocessor {
                     result.add(new GroupedMessage(
                             message.sentAtEpochMilli(),
                             message.context(),
-                            trimmed.substring(start, Math.min(trimmed.length(), start + 250))
+                            trimmed.substring(start, Math.min(trimmed.length(), start + 250)),
+                            !isShort(normalize(trimmed.substring(start, Math.min(trimmed.length(), start + 250))))
                     ));
                 }
             }
@@ -125,7 +135,7 @@ public class KakaoMessagePreprocessor {
                 if (current != null) {
                     groups.add(current.build());
                 }
-                current = new GroupBuilder(message, previousOther);
+                current = new GroupBuilder(message, previousOther, !isShort(normalize(message.content())));
             }
         }
         if (current != null) {
@@ -144,16 +154,31 @@ public class KakaoMessagePreprocessor {
 
     private String mask(String content, List<String> participants, String selectedName) {
         String masked = content == null ? "" : content;
-        masked = URL.matcher(masked).replaceAll("[URL]");
-        masked = EMAIL.matcher(masked).replaceAll("[EMAIL]");
-        masked = PHONE.matcher(masked).replaceAll("[PHONE]");
-        masked = ACCOUNT.matcher(masked).replaceAll("[ACCOUNT]");
+        String urlToken = "\uE000\uE001";
+        String emailToken = "\uE002\uE003";
+        String phoneToken = "\uE004\uE005";
+        String accountToken = "\uE006\uE007";
+        masked = URL.matcher(masked).replaceAll(urlToken);
+        masked = EMAIL.matcher(masked).replaceAll(emailToken);
+        masked = PHONE.matcher(masked).replaceAll(phoneToken);
+        masked = ACCOUNT.matcher(masked).replaceAll(accountToken);
         List<String> longestFirst = participants.stream()
                 .filter(name -> name != null && !name.isBlank())
                 .sorted(Comparator.comparingInt(String::length).reversed())
                 .toList();
+        Map<String, String> participantTokens = new LinkedHashMap<>();
+        int participantIndex = 0;
         for (String participant : longestFirst) {
-            masked = masked.replace(participant, participant.equals(selectedName) ? "[USER]" : "[PERSON]");
+            String token = "\uE100" + participantIndex++ + "\uE101";
+            participantTokens.put(token, participant.equals(selectedName) ? "[USER]" : "[PERSON]");
+            masked = masked.replace(participant, token);
+        }
+        masked = masked.replace(urlToken, "[URL]")
+                .replace(emailToken, "[EMAIL]")
+                .replace(phoneToken, "[PHONE]")
+                .replace(accountToken, "[ACCOUNT]");
+        for (Map.Entry<String, String> token : participantTokens.entrySet()) {
+            masked = masked.replace(token.getKey(), token.getValue());
         }
         return masked.length() > 500 ? masked.substring(0, 500) : masked;
     }
@@ -162,7 +187,18 @@ public class KakaoMessagePreprocessor {
         return content.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
     }
 
-    private record GroupedMessage(long sentAtEpochMilli, String context, String content) {
+    private void countProfanity(String content, Map<String, Integer> counts) {
+        String searchable = content.replace("시발점", "");
+        for (String profanity : PROFANITY) {
+            int from = 0;
+            while ((from = searchable.indexOf(profanity, from)) >= 0) {
+                counts.merge(profanity, 1, Integer::sum);
+                from += profanity.length();
+            }
+        }
+    }
+
+    private record GroupedMessage(long sentAtEpochMilli, String context, String content, boolean substantive) {
     }
 
     private static final class GroupBuilder {
@@ -171,22 +207,34 @@ public class KakaoMessagePreprocessor {
         private int count = 1;
         private final String context;
         private final StringBuilder content;
+        private boolean substantive;
 
-        private GroupBuilder(KakaoMessage message, String context) {
+        private GroupBuilder(KakaoMessage message, String context, boolean substantive) {
             this.firstSentAt = message.sentAtEpochMilli();
             this.lastSentAt = message.sentAtEpochMilli();
             this.context = context;
             this.content = new StringBuilder(message.content());
+            this.substantive = substantive;
         }
 
         private void append(KakaoMessage message) {
             content.append(" / ").append(message.content());
             lastSentAt = message.sentAtEpochMilli();
             count++;
+            substantive = substantive || !isShortValue(message.content());
         }
 
         private GroupedMessage build() {
-            return new GroupedMessage(firstSentAt, context, content.toString());
+            return new GroupedMessage(firstSentAt, context, content.toString(), substantive);
+        }
+
+        private boolean isShortValue(String value) {
+            String normalized = value.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+            return normalized.isBlank()
+                    || normalized.length() <= 1
+                    || SHORT_UTTERANCES.contains(normalized)
+                    || normalized.matches("[ㅋㅎㅠㅜ]+")
+                    || normalized.matches("[.!?]+");
         }
     }
 }

@@ -24,8 +24,8 @@ app:
       image-model: ${OPENAI_IMAGE_MODEL:gpt-image-2}
       connect-timeout: 10s
       response-timeout: 60s
-      image-timeout: 240s
+      image-timeout: 70s
   avatar:
-    storage-root: ${AVATAR_STORAGE_ROOT:${java.io.tmpdir}/godsaeng-lion/avatar}
+    storage-root: ${AVATAR_STORAGE_ROOT:./data/avatars}
   speech:
     work-root: ${SPEECH_WORK_ROOT:${java.io.tmpdir}/godsaeng-lion/speech}

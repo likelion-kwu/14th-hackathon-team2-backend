@@ -8,11 +8,15 @@ public record PreprocessedSpeechData(
         List<PreprocessedSpeechMessage> messages,
         int validMessageCount,
         Map<String, Integer> repetitionCounts,
-        Set<String> observedProfanity
+        Map<String, Integer> observedProfanityCounts
 ) {
     public PreprocessedSpeechData {
         messages = List.copyOf(messages);
         repetitionCounts = Map.copyOf(repetitionCounts);
-        observedProfanity = Set.copyOf(observedProfanity);
+        observedProfanityCounts = Map.copyOf(observedProfanityCounts);
+    }
+
+    public Set<String> observedProfanity() {
+        return observedProfanityCounts.keySet();
     }
 }

@@ -183,6 +183,7 @@ public class DefaultSpeechAnalysisService implements SpeechAnalysisService {
         try {
             chatData = temporaryStore.read(jobId);
         } catch (RuntimeException exception) {
+            throwIfExpired(jobId, userId);
             failJob(jobId, userId);
             throw new BusinessException(ErrorCode.AI_ANALYSIS_FAILED);
         }
@@ -198,6 +199,7 @@ public class DefaultSpeechAnalysisService implements SpeechAnalysisService {
 
         if (!transition(jobId, userId, SpeechAnalysisJobStatus.WAITING_PARTICIPANT_SELECTION,
                 SpeechAnalysisJobStatus.PREPROCESSING)) {
+            throwIfExpired(jobId, userId);
             throw new BusinessException(ErrorCode.AI_ANALYSIS_FAILED);
         }
         try {
@@ -267,22 +269,32 @@ public class DefaultSpeechAnalysisService implements SpeechAnalysisService {
             }
             User user = userRepository.findById(userId)
                     .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
-            List<DialogueCandidate> dialogues = dialogueGenerator.generate(
+            List<DialogueCandidate> dialogues = dialogueGenerator.generateStrict(
                     analyzed.profile(),
                     user.getNickname(),
-                    analyzed.allowedProfanity()
+                    Set.of()
             );
+            profileActivator.validateCandidate(analyzed.profile(), dialogues);
             lockManager.withUserLock(userId, () -> {
-                completeIfCurrent(jobId, userId, analyzed.profile(), dialogues);
+                boolean completed = completeIfCurrent(jobId, userId, analyzed.profile(), dialogues);
+                if (completed) {
+                    log.info(
+                            "speech_analysis jobId={} userId={} status=completed validMessages={} elapsedMs={}",
+                            jobId,
+                            userId,
+                            data.validMessageCount(),
+                            (System.nanoTime() - started) / 1_000_000
+                    );
+                } else {
+                    log.info(
+                            "speech_analysis jobId={} userId={} status=discarded elapsedMs={}",
+                            jobId,
+                            userId,
+                            (System.nanoTime() - started) / 1_000_000
+                    );
+                }
                 return null;
             });
-            log.info(
-                    "speech_analysis jobId={} userId={} status=completed validMessages={} elapsedMs={}",
-                    jobId,
-                    userId,
-                    data.validMessageCount(),
-                    (System.nanoTime() - started) / 1_000_000
-            );
         } catch (RuntimeException exception) {
             failJob(jobId, userId);
             log.warn(
@@ -305,12 +317,19 @@ public class DefaultSpeechAnalysisService implements SpeechAnalysisService {
     ) {
         Boolean completed = transactionTemplate.execute(status -> {
             SpeechAnalysisJob job = jobRepository.findOwnedForUpdate(jobId, userId).orElse(null);
-            if (job == null || job.getStatus() != SpeechAnalysisJobStatus.GENERATING_DIALOGUES
-                    || job.isExpiredAt(timeProvider.now()) || !isLatest(jobId, userId)) {
+            if (job == null || job.getStatus() != SpeechAnalysisJobStatus.GENERATING_DIALOGUES) {
+                return false;
+            }
+            if (job.isExpiredAt(timeProvider.now())) {
+                job.transitionTo(SpeechAnalysisJobStatus.EXPIRED, timeProvider.now());
+                return false;
+            }
+            if (!isLatest(jobId, userId)) {
+                job.transitionTo(SpeechAnalysisJobStatus.EXPIRED, timeProvider.now());
                 return false;
             }
             SpeechStyleProfile current = profileRepository.findByUserId(userId).orElse(null);
-            if (current != null && current.getUpdatedAt().isAfter(job.getCreatedAt())) {
+            if (current != null && !current.getUpdatedAt().isBefore(job.getCreatedAt())) {
                 job.transitionTo(SpeechAnalysisJobStatus.EXPIRED, timeProvider.now());
                 return false;
             }
@@ -329,8 +348,15 @@ public class DefaultSpeechAnalysisService implements SpeechAnalysisService {
     ) {
         Boolean changed = transactionTemplate.execute(status -> {
             SpeechAnalysisJob job = jobRepository.findOwnedForUpdate(jobId, userId).orElse(null);
-            if (job == null || job.getStatus() != expected || job.isExpiredAt(timeProvider.now())
-                    || !isLatest(jobId, userId)) {
+            if (job == null || job.getStatus() != expected) {
+                return false;
+            }
+            if (job.isExpiredAt(timeProvider.now())) {
+                job.transitionTo(SpeechAnalysisJobStatus.EXPIRED, timeProvider.now());
+                return false;
+            }
+            if (!isLatest(jobId, userId)) {
+                job.transitionTo(SpeechAnalysisJobStatus.EXPIRED, timeProvider.now());
                 return false;
             }
             job.transitionTo(next, timeProvider.now());
@@ -342,7 +368,13 @@ public class DefaultSpeechAnalysisService implements SpeechAnalysisService {
     private void failJob(UUID jobId, Long userId) {
         transactionTemplate.executeWithoutResult(status -> jobRepository.findOwnedForUpdate(jobId, userId)
                 .filter(job -> NON_TERMINAL.contains(job.getStatus()))
-                .ifPresent(job -> job.transitionTo(SpeechAnalysisJobStatus.FAILED, timeProvider.now())));
+                .ifPresent(job -> {
+                    Instant now = timeProvider.now();
+                    job.transitionTo(
+                            job.isExpiredAt(now) ? SpeechAnalysisJobStatus.EXPIRED : SpeechAnalysisJobStatus.FAILED,
+                            now
+                    );
+                }));
     }
 
     private void expireIfNeeded(SpeechAnalysisJob job) {
@@ -357,6 +389,15 @@ public class DefaultSpeechAnalysisService implements SpeechAnalysisService {
     private SpeechAnalysisJob findOwnedJob(UUID jobId, Long userId) {
         return jobRepository.findByIdAndUserId(jobId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ANALYSIS_JOB_NOT_FOUND));
+    }
+
+    private void throwIfExpired(UUID jobId, Long userId) {
+        SpeechAnalysisJob current = jobRepository.findByIdAndUserId(jobId, userId).orElse(null);
+        if (current != null
+                && (current.getStatus() == SpeechAnalysisJobStatus.EXPIRED
+                || current.isExpiredAt(timeProvider.now()))) {
+            expireIfNeeded(current);
+        }
     }
 
     private boolean isLatest(UUID jobId, Long userId) {

@@ -4,9 +4,7 @@ import com.likelion.hackathon_be.common.error.BusinessException;
 import com.likelion.hackathon_be.common.error.ErrorCode;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.util.Arrays;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -15,12 +13,22 @@ public class LocalVerificationPhotoStorage implements VerificationPhotoStorage {
 
     @Override
     public StoredVerificationPhoto store(MultipartFile photo) {
+        if (photo == null || photo.isEmpty()
+                || photo.getSize() > PhotoVerificationInput.MAX_IMAGE_BYTES) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+        }
         try {
-            Path tempFile = Files.createTempFile("routine-photo-", ".jpg");
             try (InputStream inputStream = photo.getInputStream()) {
-                Files.copy(inputStream, tempFile, StandardCopyOption.REPLACE_EXISTING);
+                byte[] image = inputStream.readNBytes(PhotoVerificationInput.MAX_IMAGE_BYTES + 1);
+                try {
+                    if (image.length > PhotoVerificationInput.MAX_IMAGE_BYTES) {
+                        throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+                    }
+                    return new StoredVerificationPhoto(image, photo.getContentType());
+                } finally {
+                    Arrays.fill(image, (byte) 0);
+                }
             }
-            return new StoredVerificationPhoto(tempFile, photo.getContentType());
         } catch (IOException exception) {
             throw new BusinessException(ErrorCode.PHOTO_AI_UNAVAILABLE);
         }
@@ -28,10 +36,8 @@ public class LocalVerificationPhotoStorage implements VerificationPhotoStorage {
 
     @Override
     public void delete(StoredVerificationPhoto photo) {
-        try {
-            Files.deleteIfExists(photo.path());
-        } catch (IOException ignored) {
-            // The original verification photo must never be retained intentionally.
+        if (photo != null) {
+            photo.destroy();
         }
     }
 }

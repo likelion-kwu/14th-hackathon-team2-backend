@@ -33,14 +33,15 @@ import com.likelion.hackathon_be.story.application.StoryProgressionResult;
 import com.likelion.hackathon_be.story.application.StoryProgressionService;
 import com.likelion.hackathon_be.user.domain.User;
 import com.likelion.hackathon_be.user.repository.UserRepository;
+import java.io.IOException;
 import java.lang.reflect.Field;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -115,18 +116,60 @@ class RoutinePhotoVerificationServiceTests {
     }
 
     @Test
-    void analyzerReceivesTemporaryPhotoObjectAndGesture() {
+    void analyzerReceivesInMemoryPhotoObjectAndGestureThenBuffersAreZeroized() {
         DailyRoutine dailyRoutine = dailyRoutine(1L, USER_ID, RoutineCategory.SKIN, 0, 0, 23, 59, MISSION_TEMPLATE_ID);
         givenTargetAndLockedRows(dailyRoutine, List.of(dailyRoutine));
+        AtomicReference<byte[]> imageSeenByAnalyzer = new AtomicReference<>();
+        when(analyzer.analyze(any(PhotoVerificationInput.class))).thenAnswer(invocation -> {
+            PhotoVerificationInput input = invocation.getArgument(0);
+            imageSeenByAnalyzer.set(input.image());
+            return PhotoVerificationAnalysis.success();
+        });
 
         service(seoulInstant(SERVICE_DATE, 10, 0)).verifyPhoto(1L, jpeg());
 
         ArgumentCaptor<PhotoVerificationInput> captor = ArgumentCaptor.forClass(PhotoVerificationInput.class);
         verify(analyzer).analyze(captor.capture());
-        assertThat(captor.getValue().photoPath()).isEqualTo(photoStorage.stored.path());
-        assertThat(captor.getValue().contentType()).isEqualTo("image/jpeg");
-        assertThat(captor.getValue().verificationObject()).isEqualTo("object-1");
+        assertThat(imageSeenByAnalyzer.get()).containsExactly(1, 2, 3);
+        assertThat(captor.getValue().image()).containsOnly((byte) 0);
+        assertThat(photoStorage.stored.image()).containsOnly((byte) 0);
+        assertThat(captor.getValue().mediaType()).isEqualTo("image/jpeg");
+        assertThat(captor.getValue().objectCode()).isEqualTo("object-1");
         assertThat(captor.getValue().gestureCode()).isEqualTo("thumbs_up");
+    }
+
+    @Test
+    void pngPhotoPreservesMediaTypeThroughInMemoryContract() {
+        DailyRoutine dailyRoutine = dailyRoutine(1L, USER_ID, RoutineCategory.SKIN, 0, 0, 23, 59, MISSION_TEMPLATE_ID);
+        givenTargetAndLockedRows(dailyRoutine, List.of(dailyRoutine));
+        AtomicReference<String> mediaTypeSeenByAnalyzer = new AtomicReference<>();
+        when(analyzer.analyze(any(PhotoVerificationInput.class))).thenAnswer(invocation -> {
+            PhotoVerificationInput input = invocation.getArgument(0);
+            mediaTypeSeenByAnalyzer.set(input.mediaType());
+            return PhotoVerificationAnalysis.success();
+        });
+
+        service(seoulInstant(SERVICE_DATE, 10, 0)).verifyPhoto(1L, png());
+
+        assertThat(mediaTypeSeenByAnalyzer).hasValue("image/png");
+        assertThat(photoStorage.deleted).isTrue();
+    }
+
+    @Test
+    void oversizedPhotoIsRejectedBeforeStorageCopiesTheRequest() throws Exception {
+        MultipartFile oversized = mock(MultipartFile.class);
+        when(oversized.isEmpty()).thenReturn(false);
+        when(oversized.getContentType()).thenReturn("image/jpeg");
+        when(oversized.getSize()).thenReturn((long) PhotoVerificationInput.MAX_IMAGE_BYTES + 1);
+
+        assertBusinessError(
+                () -> service(seoulInstant(SERVICE_DATE, 10, 0)).verifyPhoto(1L, oversized),
+                ErrorCode.VALIDATION_ERROR
+        );
+
+        verify(oversized, never()).getInputStream();
+        verify(analyzer, never()).analyze(any());
+        assertThat(photoStorage.stored).isNull();
     }
 
     @Test
@@ -247,11 +290,12 @@ class RoutinePhotoVerificationServiceTests {
     }
 
     @Test
-    void tempPhotoDeletedAfterSuccessFailureAndException() {
+    void inMemoryPhotoDeletedAndZeroizedAfterSuccessFailureAndException() {
         DailyRoutine success = dailyRoutine(1L, USER_ID, RoutineCategory.SKIN, 0, 0, 23, 59, MISSION_TEMPLATE_ID);
         givenTargetAndLockedRows(success, List.of(success));
         service(seoulInstant(SERVICE_DATE, 10, 0)).verifyPhoto(1L, jpeg());
         assertThat(photoStorage.deleted).isTrue();
+        assertThat(photoStorage.stored.image()).containsOnly((byte) 0);
 
         photoStorage = new FakePhotoStorage();
         DailyRoutine failure = dailyRoutine(2L, USER_ID, RoutineCategory.SKIN, 0, 0, 23, 59, MISSION_TEMPLATE_ID);
@@ -260,6 +304,7 @@ class RoutinePhotoVerificationServiceTests {
         assertBusinessError(() -> service(seoulInstant(SERVICE_DATE, 10, 0)).verifyPhoto(2L, jpeg()),
                 ErrorCode.PHOTO_VERIFICATION_FAILED);
         assertThat(photoStorage.deleted).isTrue();
+        assertThat(photoStorage.stored.image()).containsOnly((byte) 0);
 
         photoStorage = new FakePhotoStorage();
         DailyRoutine error = dailyRoutine(3L, USER_ID, RoutineCategory.SKIN, 0, 0, 23, 59, MISSION_TEMPLATE_ID);
@@ -268,6 +313,7 @@ class RoutinePhotoVerificationServiceTests {
         assertBusinessError(() -> service(seoulInstant(SERVICE_DATE, 10, 0)).verifyPhoto(3L, jpeg()),
                 ErrorCode.PHOTO_AI_UNAVAILABLE);
         assertThat(photoStorage.deleted).isTrue();
+        assertThat(photoStorage.stored.image()).containsOnly((byte) 0);
     }
 
     @Test
@@ -448,6 +494,10 @@ class RoutinePhotoVerificationServiceTests {
         return new MockMultipartFile("photo", "user-file-name.jpg", "image/jpeg", new byte[]{1, 2, 3});
     }
 
+    private MockMultipartFile png() {
+        return new MockMultipartFile("photo", "user-file-name.png", "image/png", new byte[]{4, 5, 6});
+    }
+
     private void assertBusinessError(ThrowingRunnable runnable, ErrorCode errorCode) {
         assertThatThrownBy(runnable::run)
                 .isInstanceOfSatisfying(BusinessException.class, exception ->
@@ -508,14 +558,19 @@ class RoutinePhotoVerificationServiceTests {
 
         @Override
         public StoredVerificationPhoto store(MultipartFile photo) {
-            stored = new StoredVerificationPhoto(Path.of("temp", "server-generated-photo.jpg"), photo.getContentType());
-            deleted = false;
-            return stored;
+            try {
+                stored = new StoredVerificationPhoto(photo.getBytes(), photo.getContentType());
+                deleted = false;
+                return stored;
+            } catch (IOException exception) {
+                throw new IllegalStateException(exception);
+            }
         }
 
         @Override
         public void delete(StoredVerificationPhoto photo) {
-            if (photo.equals(stored)) {
+            if (photo == stored) {
+                photo.destroy();
                 deleted = true;
             }
         }

@@ -8,6 +8,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import com.likelion.hackathon_be.ai.openai.OpenAiGateway;
+import com.likelion.hackathon_be.ai.openai.OpenAiGatewayException;
 import com.likelion.hackathon_be.ai.openai.OpenAiImageInput;
 import com.likelion.hackathon_be.avatar.domain.AvatarGrowthTrack;
 import jakarta.annotation.PreDestroy;
@@ -50,20 +51,27 @@ public class OpenAiAvatarSetGenerator {
             stageOneInputs.add(new OpenAiImageInput(faceReference.bytes(), faceReference.mediaType()));
         }
 
-        byte[] stageOneRaw = generateWithRetry(stagePrompt(track, 1, faceReference != null), stageOneInputs, mask);
-        CompletableFuture<byte[]> stageTwo = CompletableFuture.supplyAsync(
+        GeneratedStage stageOne = generateWithRetry(
+                stagePrompt(track, 1, faceReference != null),
+                stageOneInputs,
+                mask,
+                templateAssets.template()
+        );
+        CompletableFuture<GeneratedStage> stageTwo = CompletableFuture.supplyAsync(
                 () -> generateWithRetry(
                         stagePrompt(track, 2, false),
-                        List.of(new OpenAiImageInput(stageOneRaw, "image/png")),
-                        mask
+                        List.of(new OpenAiImageInput(stageOne.composed(), "image/png")),
+                        mask,
+                        imageProcessor.decode(stageOne.composed())
                 ),
                 stageExecutor
         );
-        CompletableFuture<byte[]> stageThree = CompletableFuture.supplyAsync(
+        CompletableFuture<GeneratedStage> stageThree = CompletableFuture.supplyAsync(
                 () -> generateWithRetry(
                         stagePrompt(track, 3, false),
-                        List.of(new OpenAiImageInput(stageOneRaw, "image/png")),
-                        mask
+                        List.of(new OpenAiImageInput(stageOne.composed(), "image/png")),
+                        mask,
+                        imageProcessor.decode(stageOne.composed())
                 ),
                 stageExecutor
         );
@@ -71,9 +79,9 @@ public class OpenAiAvatarSetGenerator {
         try {
             CompletableFuture.allOf(stageTwo, stageThree).join();
             return List.of(
-                    imageProcessor.normalizeGenerated(stageOneRaw, templateAssets.template()),
-                    imageProcessor.normalizeGenerated(stageTwo.join(), templateAssets.template()),
-                    imageProcessor.normalizeGenerated(stageThree.join(), templateAssets.template())
+                    imageProcessor.toFinalPng(stageOne.composed()),
+                    imageProcessor.toFinalPng(stageTwo.join().composed()),
+                    imageProcessor.toFinalPng(stageThree.join().composed())
             );
         } catch (CompletionException exception) {
             throw new AvatarGenerationException("Avatar stage generation failed", exception.getCause());
@@ -87,7 +95,12 @@ public class OpenAiAvatarSetGenerator {
         stageExecutor.shutdownNow();
     }
 
-    private byte[] generateWithRetry(String prompt, List<OpenAiImageInput> inputs, byte[] mask) {
+    private GeneratedStage generateWithRetry(
+            String prompt,
+            List<OpenAiImageInput> inputs,
+            byte[] mask,
+            java.awt.image.BufferedImage base
+    ) {
         RuntimeException lastFailure = null;
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
@@ -99,19 +112,31 @@ public class OpenAiAvatarSetGenerator {
                         SIZE,
                         QUALITY
                 );
-                imageProcessor.decode(generated);
-                return generated;
+                byte[] composed = imageProcessor.composeMaskedEdit(generated, base, imageProcessor.decode(mask));
+                return new GeneratedStage(composed);
             } catch (RuntimeException exception) {
                 lastFailure = exception;
+                if (exception instanceof OpenAiGatewayException gatewayException
+                        && gatewayException.kind() != OpenAiGatewayException.Kind.INVALID_RESPONSE) {
+                    break;
+                }
             }
         }
         throw new AvatarGenerationException("Image edit failed after one retry", lastFailure);
     }
 
+    private record GeneratedStage(byte[] composed) {
+    }
+
     private String stagePrompt(AvatarGrowthTrack track, int stage, boolean hasFaceReference) {
-        String personalization = hasFaceReference
-                ? "Use the second image only as a subtle reference for face shape, eyes, and overall facial impression. "
-                : "Keep the existing neutral template face identity. ";
+        String personalization;
+        if (stage > 1) {
+            personalization = "Keep the exact face identity and recognizable facial features from the first image. ";
+        } else if (hasFaceReference) {
+            personalization = "Use the second image only as a subtle reference for face shape, eyes, and overall facial impression. ";
+        } else {
+            personalization = "Keep the existing neutral template face identity. ";
+        }
         return """
                 Edit only the transparent face-mask region of the first image. Preserve the exact 2D flat human
                 avatar, canvas, full-body pose, body proportions, clothing, outline, body position, and all

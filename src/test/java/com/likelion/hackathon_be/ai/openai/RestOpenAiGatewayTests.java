@@ -4,8 +4,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -103,6 +105,88 @@ class RestOpenAiGatewayTests {
                 assertThat(exception.kind()).isEqualTo(OpenAiGatewayException.Kind.REFUSED));
     }
 
+    @Test
+    void sendsImageEditsAsMultipartFiles() throws Exception {
+        AtomicReference<String> contentType = new AtomicReference<>();
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        server = server("/v1/images/edits", exchange -> {
+            contentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1));
+            respond(exchange, 200, "{\"data\":[{\"b64_json\":\""
+                    + Base64.getEncoder().encodeToString(new byte[]{9, 8, 7}) + "\"}]}");
+        });
+        RestOpenAiGateway gateway = gateway(Duration.ofSeconds(2));
+
+        byte[] result = gateway.editImage(
+                "image-v1",
+                "edit only the mask",
+                List.of(new OpenAiImageInput(new byte[]{1, 2, 3}, "image/png")),
+                new OpenAiImageInput(new byte[]{4, 5, 6}, "image/png"),
+                "640x1280",
+                "low"
+        );
+
+        assertThat(result).containsExactly(9, 8, 7);
+        assertThat(contentType.get()).startsWith("multipart/form-data;boundary=");
+        assertThat(requestBody.get())
+                .contains("name=\"model\"")
+                .contains("test-image-model")
+                .contains("name=\"image[]\"")
+                .contains("filename=\"input-0.png\"")
+                .contains("name=\"mask\"")
+                .contains("filename=\"mask.png\"")
+                .contains("name=\"size\"")
+                .contains("640x1280")
+                .doesNotContain("data:image/png;base64");
+    }
+
+    @Test
+    void mapsIncompleteStructuredResponseByReason() throws Exception {
+        server = server(exchange -> respond(exchange, 200, """
+                {"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}
+                """));
+        RestOpenAiGateway gateway = gateway(Duration.ofSeconds(2));
+
+        assertThatThrownBy(() -> gateway.structuredResponse(
+                "test_schema", "test-v1", "instructions", "input", List.of(),
+                new ObjectMapper().readTree("{\"type\":\"object\"}"), 50
+        )).isInstanceOfSatisfying(OpenAiGatewayException.class, exception ->
+                assertThat(exception.kind()).isEqualTo(OpenAiGatewayException.Kind.INVALID_RESPONSE));
+    }
+
+    @Test
+    void doesNotRetryClientErrors() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server = server(exchange -> {
+            calls.incrementAndGet();
+            respond(exchange, 400, "{}");
+        });
+        RestOpenAiGateway gateway = gateway(Duration.ofSeconds(2));
+
+        assertThatThrownBy(() -> gateway.structuredResponse(
+                "test_schema", "test-v1", "instructions", "input", List.of(),
+                new ObjectMapper().readTree("{\"type\":\"object\"}"), 50
+        )).isInstanceOf(OpenAiGatewayException.class);
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void mapsMalformedProviderJsonToInvalidResponseWithoutRetrying() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server = server(exchange -> {
+            calls.incrementAndGet();
+            respond(exchange, 200, "{not-json");
+        });
+        RestOpenAiGateway gateway = gateway(Duration.ofSeconds(2));
+
+        assertThatThrownBy(() -> gateway.structuredResponse(
+                "test_schema", "test-v1", "instructions", "input", List.of(),
+                new ObjectMapper().readTree("{\"type\":\"object\"}"), 50
+        )).isInstanceOfSatisfying(OpenAiGatewayException.class, exception ->
+                assertThat(exception.kind()).isEqualTo(OpenAiGatewayException.Kind.INVALID_RESPONSE));
+        assertThat(calls).hasValue(1);
+    }
+
     private RestOpenAiGateway gateway(Duration responseTimeout) {
         OpenAiProperties properties = new OpenAiProperties(
                 "test-key",
@@ -117,8 +201,12 @@ class RestOpenAiGatewayTests {
     }
 
     private HttpServer server(ExchangeHandler handler) throws IOException {
+        return server("/v1/responses", handler);
+    }
+
+    private HttpServer server(String path, ExchangeHandler handler) throws IOException {
         HttpServer httpServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        httpServer.createContext("/v1/responses", exchange -> handler.handle(exchange));
+        httpServer.createContext(path, exchange -> handler.handle(exchange));
         httpServer.start();
         return httpServer;
     }

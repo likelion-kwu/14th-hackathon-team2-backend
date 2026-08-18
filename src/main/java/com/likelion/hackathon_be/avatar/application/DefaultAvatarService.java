@@ -1,7 +1,7 @@
 package com.likelion.hackathon_be.avatar.application;
 
+import java.io.IOException;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -37,6 +37,7 @@ import com.likelion.hackathon_be.story.repository.UserStoryUnlockRepository;
 import com.likelion.hackathon_be.user.domain.User;
 import com.likelion.hackathon_be.user.repository.UserRepository;
 import org.springframework.core.io.Resource;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -116,19 +117,11 @@ public class DefaultAvatarService implements AvatarService {
     @Override
     public ResponseEntity<Resource> getMyAvatarImage() {
         Long userId = currentUserProvider.getCurrentUser().id();
-        Avatar avatar = findAvatar(userId);
-        Resource resource;
-        try {
-            resource = avatarStorage.stageResource(avatar.getAssetSetKey(), currentStage(userId));
-        } catch (RuntimeException exception) {
-            throw new BusinessException(ErrorCode.AVATAR_IMAGE_NOT_FOUND);
-        }
-        if (resource == null) {
-            throw new BusinessException(ErrorCode.AVATAR_IMAGE_NOT_FOUND);
-        }
+        byte[] bytes = readCurrentStageWithSwapRetry(userId);
         return ResponseEntity.ok()
-                .cacheControl(CacheControl.maxAge(java.time.Duration.ofMinutes(5)).cachePrivate())
-                .body(resource);
+                .contentLength(bytes.length)
+                .cacheControl(CacheControl.noCache().cachePrivate())
+                .body(new ByteArrayResource(bytes));
     }
 
     @Override
@@ -313,6 +306,23 @@ public class DefaultAvatarService implements AvatarService {
     private Avatar findAvatar(Long userId) {
         return avatarRepository.findByUserId(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.AVATAR_NOT_CONFIGURED));
+    }
+
+    private byte[] readCurrentStageWithSwapRetry(Long userId) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            Avatar avatar = findAvatar(userId);
+            try {
+                Resource resource = avatarStorage.stageResource(avatar.getAssetSetKey(), currentStage(userId));
+                if (resource != null) {
+                    try (var input = resource.getInputStream()) {
+                        return input.readAllBytes();
+                    }
+                }
+            } catch (IOException | RuntimeException ignored) {
+                // A concurrent successful regeneration can remove the previous set; reload its committed key once.
+            }
+        }
+        throw new BusinessException(ErrorCode.AVATAR_IMAGE_NOT_FOUND);
     }
 
     private int currentStage(Long userId) {

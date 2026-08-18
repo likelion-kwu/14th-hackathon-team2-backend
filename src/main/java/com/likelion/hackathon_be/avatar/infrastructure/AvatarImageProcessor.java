@@ -51,6 +51,31 @@ public class AvatarImageProcessor {
         return encodePng(resize(rgba, FINAL_WIDTH, FINAL_HEIGHT));
     }
 
+    public byte[] composeMaskedEdit(byte[] generated, BufferedImage base, BufferedImage mask) {
+        BufferedImage edited = resize(decode(generated), WORK_WIDTH, WORK_HEIGHT);
+        BufferedImage normalizedBase = resize(base, WORK_WIDTH, WORK_HEIGHT);
+        BufferedImage normalizedMask = resize(mask, WORK_WIDTH, WORK_HEIGHT);
+        BufferedImage composed = new BufferedImage(WORK_WIDTH, WORK_HEIGHT, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < WORK_HEIGHT; y++) {
+            for (int x = 0; x < WORK_WIDTH; x++) {
+                int baseArgb = normalizedBase.getRGB(x, y);
+                int editedArgb = edited.getRGB(x, y);
+                int keepWeight = (normalizedMask.getRGB(x, y) >>> 24) & 0xff;
+                int editWeight = 255 - keepWeight;
+                int red = blend((baseArgb >>> 16) & 0xff, (editedArgb >>> 16) & 0xff, keepWeight, editWeight);
+                int green = blend((baseArgb >>> 8) & 0xff, (editedArgb >>> 8) & 0xff, keepWeight, editWeight);
+                int blue = blend(baseArgb & 0xff, editedArgb & 0xff, keepWeight, editWeight);
+                int alpha = (baseArgb >>> 24) & 0xff;
+                composed.setRGB(x, y, (alpha << 24) | (red << 16) | (green << 8) | blue);
+            }
+        }
+        return encodePng(composed);
+    }
+
+    public byte[] toFinalPng(byte[] workImage) {
+        return encodePng(resize(decode(workImage), FINAL_WIDTH, FINAL_HEIGHT));
+    }
+
     public byte[] createDefaultStage(BufferedImage template, AvatarGrowthTrack track, int stage) {
         BufferedImage copy = new BufferedImage(WORK_WIDTH, WORK_HEIGHT, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = copy.createGraphics();
@@ -87,10 +112,23 @@ public class AvatarImageProcessor {
     }
 
     public boolean isValidFinalPng(byte[] bytes) {
+        if (!hasPngSignature(bytes)) {
+            return false;
+        }
         BufferedImage image = decode(bytes);
-        return image.getWidth() == FINAL_WIDTH
-                && image.getHeight() == FINAL_HEIGHT
-                && image.getColorModel().hasAlpha();
+        if (image.getWidth() != FINAL_WIDTH
+                || image.getHeight() != FINAL_HEIGHT
+                || !image.getColorModel().hasAlpha()) {
+            return false;
+        }
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if (((image.getRGB(x, y) >>> 24) & 0xff) < 255) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private BufferedImage resize(BufferedImage source, int width, int height) {
@@ -182,5 +220,22 @@ public class AvatarImageProcessor {
             case 2 -> 0.12f;
             default -> 0.07f;
         };
+    }
+
+    private int blend(int base, int edited, int keepWeight, int editWeight) {
+        return (base * keepWeight + edited * editWeight + 127) / 255;
+    }
+
+    private boolean hasPngSignature(byte[] bytes) {
+        int[] signature = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+        if (bytes == null || bytes.length < signature.length) {
+            return false;
+        }
+        for (int index = 0; index < signature.length; index++) {
+            if ((bytes[index] & 0xff) != signature[index]) {
+                return false;
+            }
+        }
+        return true;
     }
 }
