@@ -34,6 +34,19 @@ public class RoutineVerification {
     protected RoutineVerification() {
     }
 
+    public static RoutineVerification create(
+            Long dailyRoutineId,
+            VerificationType verificationType,
+            Instant verifiedAt
+    ) {
+        RoutineVerification verification = new RoutineVerification();
+        verification.dailyRoutineId = dailyRoutineId;
+        verification.verificationType = verificationType;
+        verification.verifiedAt = verifiedAt;
+        verification.createdAt = verifiedAt;
+        return verification;
+    }
+
     public Long getId() {
         return id;
     }

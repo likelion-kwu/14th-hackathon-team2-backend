@@ -2,10 +2,8 @@ package com.likelion.hackathon_be.routine.application;
 
 import com.likelion.hackathon_be.common.error.FeatureNotImplementedException;
 import com.likelion.hackathon_be.routine.dto.RoutineVerificationResultResponse;
-import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-@Service
 public class NotImplementedRoutineVerificationService implements RoutineVerificationService {
 
     @Override

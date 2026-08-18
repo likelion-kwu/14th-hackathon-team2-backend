@@ -15,4 +15,6 @@ public interface RoutinePointClaimRepository extends JpaRepository<RoutinePointC
             Instant fromInclusive,
             Instant toExclusive
     );
+
+    boolean existsByDailyRoutineId(Long dailyRoutineId);
 }

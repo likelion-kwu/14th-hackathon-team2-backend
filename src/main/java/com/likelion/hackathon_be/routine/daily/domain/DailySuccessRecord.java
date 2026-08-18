@@ -32,6 +32,15 @@ public class DailySuccessRecord {
     protected DailySuccessRecord() {
     }
 
+    public static DailySuccessRecord create(Long userId, LocalDate serviceDate, Instant completedAt) {
+        DailySuccessRecord record = new DailySuccessRecord();
+        record.userId = userId;
+        record.serviceDate = serviceDate;
+        record.completedAt = completedAt;
+        record.createdAt = completedAt;
+        return record;
+    }
+
     public Long getId() {
         return id;
     }
