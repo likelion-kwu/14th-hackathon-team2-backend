@@ -19,6 +19,7 @@ import com.likelion.hackathon_be.routine.verification.domain.VerificationType;
 import com.likelion.hackathon_be.routine.verification.repository.RoutineVerificationRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -26,7 +27,7 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class DefaultRoutineVerificationService implements RoutineVerificationService {
 
-    private static final Set<String> SUPPORTED_PHOTO_CONTENT_TYPES = Set.of("image/jpeg");
+    private static final Set<String> SUPPORTED_PHOTO_CONTENT_TYPES = Set.of("image/jpeg", "image/png");
 
     private final CurrentUserProvider currentUserProvider;
     private final TimeProvider timeProvider;
@@ -71,13 +72,10 @@ public class DefaultRoutineVerificationService implements RoutineVerificationSer
 
         PhotoMissionTemplate missionTemplate = photoMissionTemplate(dailyRoutine);
         StoredVerificationPhoto storedPhoto = verificationPhotoStorage.store(photo);
+        PhotoVerificationInput analyzerInput = null;
         try {
-            PhotoVerificationAnalysis analysis = photoVerificationAnalyzer.analyze(new PhotoVerificationInput(
-                    storedPhoto.path(),
-                    storedPhoto.contentType(),
-                    dailyRoutine.getVerificationObjectSnapshot(),
-                    missionTemplate.getGestureCode()
-            ));
+            analyzerInput = analyzerInput(storedPhoto, dailyRoutine, missionTemplate);
+            PhotoVerificationAnalysis analysis = photoVerificationAnalyzer.analyze(analyzerInput);
             validateAnalysis(analysis);
             return routineCompletionService.complete(
                     userId,
@@ -88,6 +86,9 @@ public class DefaultRoutineVerificationService implements RoutineVerificationSer
         } catch (PhotoVerificationAnalyzerException exception) {
             throw new BusinessException(ErrorCode.PHOTO_AI_UNAVAILABLE);
         } finally {
+            if (analyzerInput != null) {
+                analyzerInput.destroy();
+            }
             verificationPhotoStorage.delete(storedPhoto);
         }
     }
@@ -110,6 +111,27 @@ public class DefaultRoutineVerificationService implements RoutineVerificationSer
         }
         if (!SUPPORTED_PHOTO_CONTENT_TYPES.contains(photo.getContentType())) {
             throw new BusinessException(ErrorCode.INVALID_FILE_TYPE);
+        }
+        if (photo.getSize() > PhotoVerificationInput.MAX_IMAGE_BYTES) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+        }
+    }
+
+    private PhotoVerificationInput analyzerInput(
+            StoredVerificationPhoto storedPhoto,
+            DailyRoutine dailyRoutine,
+            PhotoMissionTemplate missionTemplate
+    ) {
+        byte[] image = storedPhoto.image();
+        try {
+            return new PhotoVerificationInput(
+                    image,
+                    storedPhoto.mediaType(),
+                    dailyRoutine.getVerificationObjectSnapshot(),
+                    missionTemplate.getGestureCode()
+            );
+        } finally {
+            Arrays.fill(image, (byte) 0);
         }
     }
 

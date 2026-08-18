@@ -55,6 +55,9 @@ public class AvatarFacePhotoValidator {
         if (photo == null || photo.isEmpty()) {
             return null;
         }
+        if (photo.getSize() > ImageInputValidator.DEFAULT_MAX_BYTES) {
+            throw new BusinessException(ErrorCode.AVATAR_FACE_PHOTO_INVALID);
+        }
         ValidatedImage image;
         try {
             image = imageValidator.validate(photo.getBytes(), photo.getContentType());
@@ -70,7 +73,7 @@ public class AvatarFacePhotoValidator {
                         PROMPT_VERSION,
                         INSTRUCTIONS,
                         attempt == 0 ? "Check this face reference." : "The previous output was invalid. Re-evaluate.",
-                        List.of(new OpenAiImageInput(image.bytes(), image.mediaType())),
+                        List.of(new OpenAiImageInput(image.bytes(), image.mediaType(), "high")),
                         schema,
                         100
                 );

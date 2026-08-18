@@ -11,6 +11,7 @@ import java.util.zip.ZipOutputStream;
 import com.likelion.hackathon_be.common.error.BusinessException;
 import com.likelion.hackathon_be.common.error.ErrorCode;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.mock.web.MockMultipartFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +41,20 @@ class KakaoInputPipelineTests {
         assertThat(bracket.messages()).hasSize(2);
         assertThat(bracket.messages().get(1).sender()).isEqualTo("현");
         assertThat(pc.participants()).extracting(KakaoParticipant::displayName).containsExactly("지섭", "현");
+    }
+
+    @Test
+    void parsesAnonymizedAndroidIosAndPcExportFixtures() throws Exception {
+        for (String fixture : List.of("android-ko.txt", "ios-ko.txt", "pc-ko.csv.txt")) {
+            String text;
+            try (var input = new ClassPathResource("kakao/" + fixture).getInputStream()) {
+                text = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            KakaoChatData parsed = parser.parse(text);
+            assertThat(parsed.participants()).extracting(KakaoParticipant::displayName)
+                    .containsExactly("참여자A", "참여자B");
+            assertThat(parsed.messages()).hasSize(2);
+        }
     }
 
     @Test
@@ -86,6 +101,47 @@ class KakaoInputPipelineTests {
     }
 
     @Test
+    void excludesGroupedShortRepliesButPreservesTheirIndividualRepetitionCount() {
+        List<KakaoMessage> messages = new ArrayList<>();
+        long time = 1_700_000_000_000L;
+        for (int index = 0; index < 5; index++) {
+            messages.add(new KakaoMessage(time + index * 1_000L, index, "사용자", "ㅋㅋ"));
+        }
+        KakaoChatData data = new KakaoChatData(
+                List.of(new KakaoParticipant("p1", "사용자")),
+                messages
+        );
+
+        PreprocessedSpeechData result = new KakaoMessagePreprocessor().preprocess(data, "p1");
+
+        assertThat(result.validMessageCount()).isZero();
+        assertThat(result.messages()).isEmpty();
+        assertThat(result.repetitionCounts()).containsEntry("ㅋㅋ", 5);
+    }
+
+    @Test
+    void masksParticipantBeforeNormalizingRepetitionStatisticsAndCountsProfanity() {
+        KakaoChatData data = new KakaoChatData(
+                List.of(new KakaoParticipant("p1", "김 철수"), new KakaoParticipant("p2", "상대")),
+                List.of(
+                        new KakaoMessage(1_000, 1, "김 철수", "김 철수 오늘도 해보자"),
+                        new KakaoMessage(70_000, 2, "상대", "왜?"),
+                        new KakaoMessage(140_000, 3, "김 철수", "시발 그래도 충분히 해볼 만해"),
+                        new KakaoMessage(210_000, 4, "상대", "시발점이 뭐야?"),
+                        new KakaoMessage(280_000, 5, "김 철수", "시발점부터 다시 설명할게")
+                )
+        );
+
+        PreprocessedSpeechData result = new KakaoMessagePreprocessor().preprocess(data, "p1");
+
+        assertThat(result.repetitionCounts().keySet())
+                .allSatisfy(value -> assertThat(value).doesNotContain("김 철수", "김철수"));
+        assertThat(result.messages()).allSatisfy(message ->
+                assertThat(message.userMessage()).doesNotContain("김 철수"));
+        assertThat(result.observedProfanityCounts()).containsEntry("시발", 1);
+    }
+
+    @Test
     void rejectsZipSlipAndMultipleVisibleTextFiles() throws Exception {
         KakaoArchiveReader reader = new KakaoArchiveReader();
         MockMultipartFile traversal = zip(Map.of("../chat.txt", "unsafe"));
@@ -97,6 +153,39 @@ class KakaoInputPipelineTests {
         assertThatThrownBy(() -> reader.readSingleText(multiple))
                 .isInstanceOfSatisfying(BusinessException.class, exception ->
                         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.CHAT_TEXT_NOT_FOUND));
+    }
+
+    @Test
+    void ignoresHiddenMetadataAndRejectsEncryptedOrCorruptArchives() throws Exception {
+        KakaoArchiveReader reader = new KakaoArchiveReader();
+        MockMultipartFile withMetadata = zip(Map.of(
+                "__MACOSX/._chat.txt", "metadata",
+                ".hidden.txt", "hidden",
+                "chat.txt", "정상 대화"
+        ));
+        byte[] encryptedBytes = zip(Map.of("chat.txt", "secret")).getBytes();
+        markEncrypted(encryptedBytes);
+        MockMultipartFile encrypted = new MockMultipartFile(
+                "file", "encrypted.zip", "application/zip", encryptedBytes
+        );
+        MockMultipartFile corrupt = new MockMultipartFile(
+                "file", "broken.zip", "application/zip", new byte[]{'P', 'K', 3, 4, 1, 2, 3}
+        );
+
+        assertThat(reader.readSingleText(withMetadata)).isEqualTo("정상 대화");
+        assertThatThrownBy(() -> reader.readSingleText(encrypted))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.UNSUPPORTED_ARCHIVE));
+        assertThatThrownBy(() -> reader.readSingleText(corrupt))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void rejectsInvalidExportDatesAsUnsupportedFormat() {
+        assertThatThrownBy(() -> parser.parse(
+                "2026년 2월 30일 오전 9:29, 참여자A : 존재하지 않는 날짜"
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.CHAT_FORMAT_UNSUPPORTED));
     }
 
     private MockMultipartFile zip(Map<String, String> entries) throws Exception {
@@ -123,5 +212,20 @@ class KakaoInputPipelineTests {
                 List.of(new KakaoParticipant("p1", "상대"), new KakaoParticipant("p2", "사용자")),
                 messages
         );
+    }
+
+    private void markEncrypted(byte[] archive) {
+        for (int index = 0; index + 10 < archive.length; index++) {
+            boolean local = archive[index] == 'P' && archive[index + 1] == 'K'
+                    && archive[index + 2] == 3 && archive[index + 3] == 4;
+            boolean central = archive[index] == 'P' && archive[index + 1] == 'K'
+                    && archive[index + 2] == 1 && archive[index + 3] == 2;
+            if (local) {
+                archive[index + 6] = (byte) (archive[index + 6] | 1);
+            }
+            if (central) {
+                archive[index + 8] = (byte) (archive[index + 8] | 1);
+            }
+        }
     }
 }

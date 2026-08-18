@@ -1,8 +1,9 @@
 package com.likelion.hackathon_be.routine.photo;
 
-import java.io.IOException;
-import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 import com.likelion.hackathon_be.ai.image.ImageInputValidator;
 import com.likelion.hackathon_be.ai.image.ImageValidationException;
@@ -30,6 +31,15 @@ public class OpenAiPhotoVerificationAnalyzer implements PhotoVerificationAnalyze
             sensitive traits. If the image is blurred, occluded, or ambiguous, mark decidable false. Return only
             the provided strict JSON schema.
             """;
+    private static final Map<String, String> SUPPORTED_OBJECTS = Map.of(
+            "CUP", "a drinking cup",
+            "WATER_BOTTLE", "a water bottle",
+            "COSMETIC_CONTAINER", "a cosmetic or skincare container",
+            "SUPPLEMENT_CONTAINER", "a supplement container",
+            "TOWEL", "a towel",
+            "TOOTHBRUSH", "a toothbrush"
+    );
+    private static final Pattern SAFE_CODE = Pattern.compile("[A-Z][A-Z0-9_]{0,39}");
 
     private final OpenAiGateway gateway;
     private final ImageInputValidator imageValidator;
@@ -66,15 +76,33 @@ public class OpenAiPhotoVerificationAnalyzer implements PhotoVerificationAnalyze
 
     @Override
     public PhotoVerificationAnalysis analyze(PhotoVerificationInput input) {
-        byte[] photo = readPhoto(input);
+        byte[] photo = input.image();
+        try {
+            return analyze(input, photo);
+        } finally {
+            Arrays.fill(photo, (byte) 0);
+        }
+    }
+
+    private PhotoVerificationAnalysis analyze(PhotoVerificationInput input, byte[] photo) {
         ValidatedImage image;
         try {
-            image = imageValidator.validate(photo, input.contentType());
+            image = imageValidator.validate(photo, input.mediaType());
         } catch (ImageValidationException exception) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
-        String request = "Required object code: " + input.verificationObject()
-                + "\nRequired gesture code: " + input.gestureCode();
+        if (input.objectCode() == null || input.gestureCode() == null
+                || !SAFE_CODE.matcher(input.objectCode()).matches()
+                || !SAFE_CODE.matcher(input.gestureCode()).matches()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+        }
+        String objectDescription = SUPPORTED_OBJECTS.getOrDefault(
+                input.objectCode(),
+                input.objectCode().toLowerCase(java.util.Locale.ROOT).replace('_', ' ')
+        );
+        String request = "Required object: " + objectDescription
+                + " (code " + input.objectCode() + ")"
+                + "\nRequired hand gesture code: " + input.gestureCode();
         for (int schemaAttempt = 0; schemaAttempt < 2; schemaAttempt++) {
             try {
                 JsonNode result = gateway.structuredResponse(
@@ -82,7 +110,7 @@ public class OpenAiPhotoVerificationAnalyzer implements PhotoVerificationAnalyze
                         PROMPT_VERSION,
                         INSTRUCTIONS,
                         schemaAttempt == 0 ? request : request + "\nYour previous result was inconsistent. Re-evaluate.",
-                        List.of(new OpenAiImageInput(image.bytes(), image.mediaType())),
+                        List.of(new OpenAiImageInput(image.bytes(), image.mediaType(), "high")),
                         schema,
                         160
                 );
@@ -91,12 +119,13 @@ public class OpenAiPhotoVerificationAnalyzer implements PhotoVerificationAnalyze
                     return new PhotoVerificationAnalysis(
                             decision.decidable(),
                             decision.objectMatched(),
-                            decision.gestureMatched()
+                            decision.gestureMatched(),
+                            decision.reasonCode().name()
                     );
                 }
             } catch (OpenAiGatewayException exception) {
                 if (exception.kind() == OpenAiGatewayException.Kind.REFUSED) {
-                    return new PhotoVerificationAnalysis(false, false, false);
+                    return new PhotoVerificationAnalysis(false, false, false, "MODEL_REFUSED");
                 }
                 if (exception.kind() == OpenAiGatewayException.Kind.INVALID_RESPONSE && schemaAttempt == 0) {
                     continue;
@@ -109,17 +138,6 @@ public class OpenAiPhotoVerificationAnalyzer implements PhotoVerificationAnalyze
             }
         }
         throw new PhotoVerificationAnalyzerException("OpenAI photo verification response is invalid");
-    }
-
-    private byte[] readPhoto(PhotoVerificationInput input) {
-        try {
-            if (Files.size(input.photoPath()) > ImageInputValidator.DEFAULT_MAX_BYTES) {
-                throw new BusinessException(ErrorCode.VALIDATION_ERROR);
-            }
-            return Files.readAllBytes(input.photoPath());
-        } catch (IOException exception) {
-            throw new PhotoVerificationAnalyzerException("Cannot read temporary verification photo", exception);
-        }
     }
 
     private PhotoVerificationDecision parse(JsonNode result) {

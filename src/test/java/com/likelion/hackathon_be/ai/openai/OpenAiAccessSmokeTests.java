@@ -24,7 +24,7 @@ class OpenAiAccessSmokeTests {
                 System.getenv().getOrDefault("OPENAI_IMAGE_MODEL", "gpt-image-2"),
                 Duration.ofSeconds(10),
                 Duration.ofSeconds(60),
-                Duration.ofSeconds(240)
+                Duration.ofSeconds(70)
         );
         ObjectMapper objectMapper = new ObjectMapper();
         RestOpenAiGateway gateway = new RestOpenAiGateway(properties, objectMapper);
@@ -49,6 +49,21 @@ class OpenAiAccessSmokeTests {
         }
         byte[] template = processor.encodePng(processor.prepareTemplate(source));
         byte[] mask = processor.encodePng(processor.createFaceMask());
+        JsonNode vision = gateway.structuredResponse(
+                "vision_smoke_result",
+                "smoke-v1",
+                "Confirm only whether an image input was received. Return the strict schema.",
+                "Inspect the attached non-personal avatar template.",
+                List.of(new OpenAiImageInput(template, "image/png", "high")),
+                objectMapper.readTree("""
+                        {"type":"object","additionalProperties":false,
+                         "properties":{"imageReceived":{"type":"boolean","const":true}},
+                         "required":["imageReceived"]}
+                        """),
+                50
+        );
+        assertThat(vision.path("imageReceived").booleanValue()).isTrue();
+
         byte[] generated = gateway.editImage(
                 "smoke-v1",
                 "Preserve this exact fictional 2D human avatar and make a tiny neutral color adjustment inside the mask.",

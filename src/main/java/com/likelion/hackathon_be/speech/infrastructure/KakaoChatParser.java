@@ -44,6 +44,15 @@ public class KakaoChatParser {
             "사진을 보냈습니다.", "동영상을 보냈습니다.", "파일을 보냈습니다.",
             "삭제된 메시지입니다.", "이모티콘", "송금했습니다."
     );
+    private final List<LineAdapter> lineAdapters;
+
+    public KakaoChatParser() {
+        this.lineAdapters = List.of(
+                this::parseAndroidLine,
+                this::parseIosLine,
+                this::parsePcLine
+        );
+    }
 
     public KakaoChatData parse(String text) {
         String[] lines = text.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
@@ -51,66 +60,16 @@ public class KakaoChatParser {
         List<MutableMessage> parsed = new ArrayList<>();
         long sequence = 0;
         for (String line : lines) {
-            Matcher android = ANDROID.matcher(line);
-            if (android.matches()) {
-                parsed.add(message(
-                        date(android, 1),
-                        to24Hour(android.group(4), integer(android, 5)),
-                        integer(android, 6),
-                        android.group(7),
-                        android.group(8),
-                        sequence++
-                ));
-                continue;
+            MutableMessage adapted = null;
+            for (LineAdapter adapter : lineAdapters) {
+                adapted = adapter.parse(line, currentDate, sequence);
+                if (adapted != null) {
+                    break;
+                }
             }
-            Matcher bracket = BRACKET.matcher(line);
-            if (bracket.matches()) {
-                parsed.add(message(
-                        currentDate,
-                        to24Hour(bracket.group(2), integer(bracket, 3)),
-                        integer(bracket, 4),
-                        bracket.group(1),
-                        bracket.group(5),
-                        sequence++
-                ));
-                continue;
-            }
-            Matcher iso = ISO.matcher(line);
-            if (iso.matches()) {
-                parsed.add(message(
-                        date(iso, 1),
-                        integer(iso, 4),
-                        integer(iso, 5),
-                        iso.group(6),
-                        iso.group(7),
-                        sequence++
-                ));
-                continue;
-            }
-            Matcher csv = PC_CSV.matcher(line);
-            if (csv.matches()) {
-                String sender = csv.group(6) == null ? csv.group(7) : csv.group(6);
-                String content = csv.group(8) == null ? csv.group(9) : csv.group(8).replace("\"\"", "\"");
-                parsed.add(message(
-                        date(csv, 1),
-                        integer(csv, 4),
-                        integer(csv, 5),
-                        sender,
-                        content,
-                        sequence++
-                ));
-                continue;
-            }
-            Matcher dotted = DOTTED_KOREAN.matcher(line);
-            if (dotted.matches()) {
-                parsed.add(message(
-                        date(dotted, 1),
-                        to24Hour(dotted.group(4), integer(dotted, 5)),
-                        integer(dotted, 6),
-                        dotted.group(7),
-                        dotted.group(8),
-                        sequence++
-                ));
+            if (adapted != null) {
+                parsed.add(adapted);
+                sequence++;
                 continue;
             }
             Matcher date = DATE_LINE.matcher(line);
@@ -147,6 +106,75 @@ public class KakaoChatParser {
         return new KakaoChatData(participants, messages);
     }
 
+    private MutableMessage parseAndroidLine(String line, LocalDate currentDate, long sequence) {
+        Matcher android = ANDROID.matcher(line);
+        if (android.matches()) {
+            return message(
+                    date(android, 1),
+                    to24Hour(android.group(4), integer(android, 5)),
+                    integer(android, 6),
+                    android.group(7),
+                    android.group(8),
+                    sequence
+            );
+        }
+        Matcher dotted = DOTTED_KOREAN.matcher(line);
+        if (dotted.matches()) {
+            return message(
+                    date(dotted, 1),
+                    to24Hour(dotted.group(4), integer(dotted, 5)),
+                    integer(dotted, 6),
+                    dotted.group(7),
+                    dotted.group(8),
+                    sequence
+            );
+        }
+        return null;
+    }
+
+    private MutableMessage parseIosLine(String line, LocalDate currentDate, long sequence) {
+        Matcher bracket = BRACKET.matcher(line);
+        if (!bracket.matches()) {
+            return null;
+        }
+        return message(
+                currentDate,
+                to24Hour(bracket.group(2), integer(bracket, 3)),
+                integer(bracket, 4),
+                bracket.group(1),
+                bracket.group(5),
+                sequence
+        );
+    }
+
+    private MutableMessage parsePcLine(String line, LocalDate currentDate, long sequence) {
+        Matcher iso = ISO.matcher(line);
+        if (iso.matches()) {
+            return message(
+                    date(iso, 1),
+                    integer(iso, 4),
+                    integer(iso, 5),
+                    iso.group(6),
+                    iso.group(7),
+                    sequence
+            );
+        }
+        Matcher csv = PC_CSV.matcher(line);
+        if (!csv.matches()) {
+            return null;
+        }
+        String sender = csv.group(6) == null ? csv.group(7) : csv.group(6);
+        String content = csv.group(8) == null ? csv.group(9) : csv.group(8).replace("\"\"", "\"");
+        return message(
+                date(csv, 1),
+                integer(csv, 4),
+                integer(csv, 5),
+                sender,
+                content,
+                sequence
+        );
+    }
+
     private MutableMessage message(
             LocalDate date,
             int hour,
@@ -166,15 +194,23 @@ public class KakaoChatParser {
     }
 
     private LocalDate date(Matcher matcher, int firstGroup) {
-        return LocalDate.of(
-                Integer.parseInt(matcher.group(firstGroup)),
-                Integer.parseInt(matcher.group(firstGroup + 1)),
-                Integer.parseInt(matcher.group(firstGroup + 2))
-        );
+        try {
+            return LocalDate.of(
+                    Integer.parseInt(matcher.group(firstGroup)),
+                    Integer.parseInt(matcher.group(firstGroup + 1)),
+                    Integer.parseInt(matcher.group(firstGroup + 2))
+            );
+        } catch (RuntimeException exception) {
+            throw new BusinessException(ErrorCode.CHAT_FORMAT_UNSUPPORTED);
+        }
     }
 
     private int integer(Matcher matcher, int group) {
-        return Integer.parseInt(matcher.group(group));
+        try {
+            return Integer.parseInt(matcher.group(group));
+        } catch (RuntimeException exception) {
+            throw new BusinessException(ErrorCode.CHAT_FORMAT_UNSUPPORTED);
+        }
     }
 
     private int to24Hour(String period, int hour) {
@@ -214,5 +250,10 @@ public class KakaoChatParser {
         private void append(String line) {
             content.append('\n').append(line);
         }
+    }
+
+    @FunctionalInterface
+    private interface LineAdapter {
+        MutableMessage parse(String line, LocalDate currentDate, long sequence);
     }
 }
