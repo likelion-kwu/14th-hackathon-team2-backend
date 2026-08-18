@@ -30,6 +30,16 @@ public class GuestSession {
     protected GuestSession() {
     }
 
+    public static GuestSession create(Long userId, String tokenHash, Instant expiresAt, Instant now) {
+        GuestSession guestSession = new GuestSession();
+        guestSession.id = UUID.randomUUID();
+        guestSession.userId = userId;
+        guestSession.tokenHash = tokenHash;
+        guestSession.expiresAt = expiresAt;
+        guestSession.createdAt = now;
+        return guestSession;
+    }
+
     public UUID getId() {
         return id;
     }

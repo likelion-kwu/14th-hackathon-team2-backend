@@ -29,6 +29,13 @@ public class User {
     protected User() {
     }
 
+    public static User createGuest(Instant now) {
+        User user = new User();
+        user.createdAt = now;
+        user.updatedAt = now;
+        return user;
+    }
+
     public Long getId() {
         return id;
     }
