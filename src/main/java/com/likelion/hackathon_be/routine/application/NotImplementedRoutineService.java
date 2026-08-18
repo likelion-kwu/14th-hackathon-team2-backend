@@ -5,9 +5,7 @@ import com.likelion.hackathon_be.routine.dto.CreateRoutineRequest;
 import com.likelion.hackathon_be.routine.dto.RoutineResponse;
 import com.likelion.hackathon_be.routine.dto.UpdateRoutineRequest;
 import java.util.List;
-import org.springframework.stereotype.Service;
 
-@Service
 public class NotImplementedRoutineService implements RoutineService {
 
     @Override

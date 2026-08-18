@@ -29,6 +29,17 @@ public interface DailyRoutineRepository extends JpaRepository<DailyRoutine, Long
             LocalDate serviceDate
     );
 
+    List<DailyRoutine> findByRoutineIdAndServiceDateGreaterThanEqualOrderByServiceDateAsc(
+            Long routineId,
+            LocalDate serviceDate
+    );
+
+    List<DailyRoutine> findByUserIdAndServiceDateBetween(
+            Long userId,
+            LocalDate fromDate,
+            LocalDate toDate
+    );
+
     @Query("""
             select distinct d.serviceDate
             from DailyRoutine d

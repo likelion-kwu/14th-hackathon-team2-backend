@@ -1,9 +1,7 @@
 package com.likelion.hackathon_be.routine;
 
-import com.likelion.hackathon_be.common.error.ErrorCode;
 import com.likelion.hackathon_be.common.error.FeatureNotImplementedException;
 import com.likelion.hackathon_be.routine.application.NotImplementedRoutinePointService;
-import com.likelion.hackathon_be.routine.application.NotImplementedRoutineService;
 import com.likelion.hackathon_be.routine.application.NotImplementedRoutineVerificationService;
 import com.likelion.hackathon_be.routine.domain.DayOfWeek;
 import com.likelion.hackathon_be.routine.domain.RepeatType;
@@ -12,6 +10,7 @@ import com.likelion.hackathon_be.routine.dto.CreateRoutineRequest;
 import com.likelion.hackathon_be.routine.dto.DailyRoutineStatus;
 import com.likelion.hackathon_be.routine.dto.DayStatus;
 import com.likelion.hackathon_be.routine.dto.PointClaimResponse;
+import com.likelion.hackathon_be.routine.dto.RoutineResponse;
 import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
@@ -20,15 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RoutineApiSkeletonTests {
-
-    @Test
-    void routineSkeletonUses501Placeholder() {
-        NotImplementedRoutineService service = new NotImplementedRoutineService();
-
-        assertThatThrownBy(service::getRoutines)
-                .isInstanceOfSatisfying(FeatureNotImplementedException.class, exception ->
-                        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.NOT_IMPLEMENTED));
-    }
 
     @Test
     void verificationAndPointSkeletonsUse501Placeholder() {
@@ -54,6 +44,27 @@ class RoutineApiSkeletonTests {
                         "repeatType",
                         "daysOfWeek",
                         "verificationObject"
+                );
+    }
+
+    @Test
+    void routineResponseIncludesEffectiveDateContract() {
+        assertThat(Arrays.stream(RoutineResponse.class.getRecordComponents())
+                .map(RecordComponent::getName))
+                .containsExactly(
+                        "id",
+                        "category",
+                        "content",
+                        "scheduledDate",
+                        "startTime",
+                        "endTime",
+                        "repeatType",
+                        "daysOfWeek",
+                        "verificationObject",
+                        "effectiveFrom",
+                        "appliedToCurrentServiceDate",
+                        "createdAt",
+                        "updatedAt"
                 );
     }
 
