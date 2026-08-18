@@ -15,6 +15,9 @@ import com.likelion.hackathon_be.routine.dto.DayStatus;
 import com.likelion.hackathon_be.routine.dto.RoutineVerificationResultResponse;
 import com.likelion.hackathon_be.routine.point.domain.RoutinePointClaim;
 import com.likelion.hackathon_be.routine.point.repository.RoutinePointClaimRepository;
+import com.likelion.hackathon_be.routine.repository.PhotoMissionTemplateRepository;
+import com.likelion.hackathon_be.routine.verification.application.PhotoVerificationAnalyzer;
+import com.likelion.hackathon_be.routine.verification.application.VerificationPhotoStorage;
 import com.likelion.hackathon_be.routine.verification.domain.RoutineVerification;
 import com.likelion.hackathon_be.routine.verification.domain.VerificationType;
 import com.likelion.hackathon_be.routine.verification.repository.RoutineVerificationRepository;
@@ -299,14 +302,23 @@ class RoutineCheckVerificationServiceTests {
     }
 
     private DefaultRoutineVerificationService service(Instant now) {
-        return new DefaultRoutineVerificationService(
-                () -> new CurrentUser(USER_ID),
+        RoutineCompletionService completionService = new DefaultRoutineCompletionService(
                 new FixedTimeProvider(now),
                 userRepository,
                 dailyRoutineRepository,
                 verificationRepository,
                 dailySuccessRecordRepository,
                 pointClaimRepository
+        );
+        return new DefaultRoutineVerificationService(
+                () -> new CurrentUser(USER_ID),
+                new FixedTimeProvider(now),
+                dailyRoutineRepository,
+                verificationRepository,
+                mock(PhotoMissionTemplateRepository.class),
+                mock(PhotoVerificationAnalyzer.class),
+                mock(VerificationPhotoStorage.class),
+                completionService
         );
     }
 
