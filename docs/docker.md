@@ -1,6 +1,6 @@
 # Docker 실행 가이드
 
-이 구성은 Spring Boot 백엔드와 PostgreSQL 16을 컨테이너로 실행한다. 기존 `systemd + JAR` 실행 경로는 유지되며, Docker 실행은 별도의 선택 가능한 경로다.
+이 구성은 Spring Boot 백엔드와 PostgreSQL 16을 컨테이너로 실행한다. 운영 배포도 GitHub Actions가 빌드한 이미지를 가비아 VM에 전송한 뒤 같은 Compose 스택으로 교체한다.
 
 ## 구성
 
@@ -87,3 +87,11 @@ AVATAR_HOST_PATH=/var/lib/godsaengsaja/avatars
 6. `/app/tmp`의 Kakao 임시 데이터는 영속 볼륨에 저장되지 않는다.
 
 현재 health API는 애플리케이션 프로세스의 liveness만 확인하며 DB/OpenAI까지 호출하는 readiness check는 아니다.
+
+## 운영 자동 배포
+
+`main`에 push되면 GitHub Actions가 테스트와 Docker 이미지 빌드를 수행하고, 이미지 archive와 `compose.yaml`을 SSH로 가비아 VM에 전송한다. 서버는 `/opt`, `/srv`, 또는 `/home` 아래의 `GABIA_DEPLOY_PATH`에 Compose 파일과 `.env`를 유지한다.
+
+배포 시 기존 PostgreSQL named volume과 Avatar 호스트 디렉터리는 보존된다. 새 backend 컨테이너가 health check를 통과하지 못하면 직전 이미지로 되돌린다. Flyway가 이미 적용한 DB migration은 이미지 롤백으로 되돌아가지 않으므로 운영 migration은 직전 버전과 호환되어야 한다.
+
+서버의 `${GABIA_DEPLOY_PATH}/.env`에는 최소한 강한 `POSTGRES_PASSWORD`를 설정해야 한다. 이 파일은 GitHub artifact나 저장소에 포함하지 않고 서버에만 `0600` 권한으로 둔다.

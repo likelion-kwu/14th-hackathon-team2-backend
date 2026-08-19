@@ -1,3 +1,5 @@
+name: godsaeng-lion
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -21,7 +23,8 @@ services:
       context: .
       args:
         APP_VERSION: ${APP_VERSION:-0.0.2-SNAPSHOT}
-    image: godsaeng-lion-backend:${APP_VERSION:-0.0.2-SNAPSHOT}
+    image: ${BACKEND_IMAGE:-godsaeng-lion-backend:0.0.2-SNAPSHOT}
+    pull_policy: never
     restart: unless-stopped
     depends_on:
       postgres:
