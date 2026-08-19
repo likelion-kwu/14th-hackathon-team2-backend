@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
@@ -25,6 +26,7 @@ public class ClasspathRoutineCatalog implements RoutineCatalog {
     private final Map<RoutineCategory, List<RoutineRecommendationDefinition>> recommendationsByCategory;
     private final Set<String> verificationObjectCodes;
 
+    @Autowired
     public ClasspathRoutineCatalog(ObjectMapper objectMapper) {
         this(objectMapper, new ClassPathResource(CATALOG_PATH));
     }

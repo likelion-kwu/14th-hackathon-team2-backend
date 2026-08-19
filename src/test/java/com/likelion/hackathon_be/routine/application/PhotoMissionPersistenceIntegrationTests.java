@@ -12,6 +12,7 @@ import com.likelion.hackathon_be.routine.repository.PhotoMissionTemplateReposito
 import com.likelion.hackathon_be.routine.repository.RoutineRepository;
 import com.likelion.hackathon_be.user.domain.User;
 import com.likelion.hackathon_be.user.repository.UserRepository;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -93,7 +94,7 @@ class PhotoMissionPersistenceIntegrationTests {
                         """,
                 "THUMBS_UP",
                 "컵과 함께 엄지척 해주세요.",
-                NOW
+                Timestamp.from(NOW)
         );
         DailyRoutine dailyRoutine = dailyRoutineRepository.saveAndFlush(
                 DailyRoutine.createSnapshot(routine, SERVICE_DATE, NOW)

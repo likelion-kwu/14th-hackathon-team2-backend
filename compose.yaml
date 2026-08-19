@@ -1,0 +1,61 @@
+name: godsaeng-lion
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-godsaeng_lion}
+      POSTGRES_USER: ${POSTGRES_USER:-godsaeng}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    stop_grace_period: 30s
+
+  backend:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.2-SNAPSHOT}
+    image: ${BACKEND_IMAGE:-godsaeng-lion-backend:0.0.2-SNAPSHOT}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-godsaeng_lion}
+      DB_USERNAME: ${POSTGRES_USER:-godsaeng}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com}
+      OPENAI_RESPONSES_MODEL: ${OPENAI_RESPONSES_MODEL:-gpt-5.6-luna}
+      OPENAI_IMAGE_MODEL: ${OPENAI_IMAGE_MODEL:-gpt-image-2}
+      AVATAR_STORAGE_ROOT: /app/data/avatars
+      SPEECH_WORK_ROOT: /app/tmp/speech
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8080}:8080"
+    volumes:
+      - type: bind
+        source: ${AVATAR_HOST_PATH:-./data/avatars}
+        target: /app/data/avatars
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /app/tmp:rw,noexec,nosuid,size=536870912,mode=700,uid=10001,gid=10001
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+
+volumes:
+  postgres-data:

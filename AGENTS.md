@@ -55,6 +55,7 @@ Observed baseline:
 Build: Gradle Wrapper
 Language: Java 17 toolchain
 Framework: Spring Boot 4.1.0
+Container: Docker multi-stage Java 17 image + Docker Compose
 Base package: com.likelion.hackathon_be
 Web: Spring Web MVC
 Persistence: Spring Data JPA
