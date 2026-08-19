@@ -3,6 +3,8 @@ package com.likelion.hackathon_be.avatar.infrastructure;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.geom.AffineTransform;
+import java.awt.geom.Ellipse2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -80,11 +82,34 @@ public class AvatarImageProcessor {
         BufferedImage copy = new BufferedImage(WORK_WIDTH, WORK_HEIGHT, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = copy.createGraphics();
         graphics.drawImage(template, 0, 0, null);
+        if (track == AvatarGrowthTrack.HEALTH_FIT || track == AvatarGrowthTrack.DIET) {
+            applyFixedFaceOutlinePreset(graphics, template, stage);
+        }
         graphics.setComposite(java.awt.AlphaComposite.SrcAtop.derive(defaultTintAlpha(stage)));
         graphics.setColor(defaultTint(track, stage));
         graphics.fillOval(240, 105, 160, 205);
         graphics.dispose();
         return encodePng(resize(copy, FINAL_WIDTH, FINAL_HEIGHT));
+    }
+
+    private void applyFixedFaceOutlinePreset(Graphics2D graphics, BufferedImage template, int stage) {
+        double horizontalScale = switch (stage) {
+            case 1 -> 1.055d;
+            case 2 -> 1.0d;
+            default -> 0.955d;
+        };
+        if (horizontalScale == 1.0d) {
+            return;
+        }
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        graphics.setClip(new Ellipse2D.Double(220, 75, 200, 270));
+        AffineTransform transform = new AffineTransform();
+        transform.translate(WORK_WIDTH / 2.0d, 0);
+        transform.scale(horizontalScale, 1.0d);
+        transform.translate(-WORK_WIDTH / 2.0d, 0);
+        graphics.drawImage(template, transform, null);
+        graphics.setClip(null);
     }
 
     public byte[] encodePng(BufferedImage image) {

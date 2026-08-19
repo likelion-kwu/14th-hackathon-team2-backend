@@ -23,6 +23,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import tools.jackson.databind.JsonNode;
 
 class AvatarAssetTests {
@@ -80,26 +81,45 @@ class AvatarAssetTests {
         Files.createDirectories(unknown);
         Files.writeString(unknown.resolve("marker"), "keep");
 
+        int deleted = storage.cleanupUnreferencedGeneratedSets(Set.of(referencedKey + "/"));
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(temporaryDirectory.resolve(referencedKey)).isDirectory();
+        assertThat(temporaryDirectory.resolve(orphanedKey)).doesNotExist();
+        assertThat(malformed).isDirectory();
+        assertThat(unknown).isDirectory();
+        assertThat(storage.stageResource(storage.defaultKey(AvatarGrowthTrack.SKIN), 1)).isNotNull();
+    }
+
+    @Test
+    void startupRecoveryDoesNotFollowGeneratedSymlinkOutsideRoot() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        AvatarTemplateAssets templates = new AvatarTemplateAssets(processor);
+        templates.initialize();
+        AvatarStorage storage = new AvatarStorage(new AvatarProperties(temporaryDirectory), processor, templates);
+        storage.initializeDefaults();
+        List<byte[]> validStages = List.of(
+                processor.createDefaultStage(templates.template(), AvatarGrowthTrack.SKIN, 1),
+                processor.createDefaultStage(templates.template(), AvatarGrowthTrack.SKIN, 2),
+                processor.createDefaultStage(templates.template(), AvatarGrowthTrack.SKIN, 3)
+        );
+
         Path outside = Files.createTempDirectory("avatar-recovery-outside-");
         for (int stage = 1; stage <= 3; stage++) {
             Files.write(outside.resolve("stage" + stage + ".png"), validStages.get(stage - 1));
         }
         Path symlink = temporaryDirectory.resolve("generated/102/" + UUID.randomUUID());
         Files.createDirectories(symlink.getParent());
-        Files.createSymbolicLink(symlink, outside);
+        createSymbolicLinkOrSkip(symlink, outside);
 
         try {
-            int deleted = storage.cleanupUnreferencedGeneratedSets(Set.of(referencedKey + "/"));
+            int deleted = storage.cleanupUnreferencedGeneratedSets(Set.of());
 
-            assertThat(deleted).isEqualTo(1);
-            assertThat(temporaryDirectory.resolve(referencedKey)).isDirectory();
-            assertThat(temporaryDirectory.resolve(orphanedKey)).doesNotExist();
-            assertThat(malformed).isDirectory();
-            assertThat(unknown).isDirectory();
+            assertThat(deleted).isZero();
             assertThat(Files.isSymbolicLink(symlink)).isTrue();
             assertThat(outside.resolve("stage1.png")).exists();
-            assertThat(storage.stageResource(storage.defaultKey(AvatarGrowthTrack.SKIN), 1)).isNotNull();
         } finally {
+            Files.deleteIfExists(symlink);
             for (int stage = 1; stage <= 3; stage++) {
                 Files.deleteIfExists(outside.resolve("stage" + stage + ".png"));
             }
@@ -144,6 +164,33 @@ class AvatarAssetTests {
         assertThat(opaque).isPositive();
         assertThatThrownBy(() -> storage.resolve("../../outside"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void healthAndDietDefaultStagesChangeOnlyTheHumanFacePresetArea() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        AvatarTemplateAssets templates = new AvatarTemplateAssets(processor);
+        templates.initialize();
+
+        for (AvatarGrowthTrack track : List.of(AvatarGrowthTrack.HEALTH_FIT, AvatarGrowthTrack.DIET)) {
+            BufferedImage stageOne = processor.decode(processor.createDefaultStage(templates.template(), track, 1));
+            BufferedImage stageThree = processor.decode(processor.createDefaultStage(templates.template(), track, 3));
+
+            int changedFacePixels = 0;
+            for (int y = 20; y < 145; y++) {
+                for (int x = 75; x < 175; x++) {
+                    if (stageOne.getRGB(x, y) != stageThree.getRGB(x, y)) {
+                        changedFacePixels++;
+                    }
+                }
+            }
+            assertThat(changedFacePixels).isGreaterThan(500);
+            for (int y = 160; y < stageOne.getHeight(); y++) {
+                for (int x = 0; x < stageOne.getWidth(); x++) {
+                    assertThat(stageOne.getRGB(x, y)).isEqualTo(stageThree.getRGB(x, y));
+                }
+            }
+        }
     }
 
     @Test
@@ -211,7 +258,7 @@ class AvatarAssetTests {
     }
 
     @Test
-    void deleteGeneratedCannotTraverseIntoDefaultsAndSymlinkReadsCannotEscape() throws Exception {
+    void deleteGeneratedCannotTraverseIntoDefaults() throws Exception {
         AvatarImageProcessor processor = new AvatarImageProcessor();
         AvatarTemplateAssets templates = new AvatarTemplateAssets(processor);
         templates.initialize();
@@ -220,16 +267,27 @@ class AvatarAssetTests {
 
         storage.deleteGenerated("generated/../defaults/skin");
         assertThat(storage.stageResource(storage.defaultKey(AvatarGrowthTrack.SKIN), 1)).isNotNull();
+    }
+
+    @Test
+    void stageResourceSymlinkReadsCannotEscape() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        AvatarTemplateAssets templates = new AvatarTemplateAssets(processor);
+        templates.initialize();
+        AvatarStorage storage = new AvatarStorage(new AvatarProperties(temporaryDirectory), processor, templates);
+        storage.initializeDefaults();
 
         Path outside = Files.createTempDirectory("avatar-outside-");
+        Path symlink = temporaryDirectory.resolve("link");
         try {
             Files.write(outside.resolve("stage1.png"), processor.createDefaultStage(
                     templates.template(), AvatarGrowthTrack.SKIN, 1
             ));
-            Files.createSymbolicLink(temporaryDirectory.resolve("link"), outside);
+            createSymbolicLinkOrSkip(symlink, outside);
             assertThatThrownBy(() -> storage.stageResource("link", 1))
                     .isInstanceOf(IllegalArgumentException.class);
         } finally {
+            Files.deleteIfExists(symlink);
             Files.deleteIfExists(outside.resolve("stage1.png"));
             Files.deleteIfExists(outside);
         }
@@ -299,6 +357,15 @@ class AvatarAssetTests {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         ImageIO.write(image, "png", output);
         return output.toByteArray();
+    }
+
+    private void createSymbolicLinkOrSkip(Path link, Path target) throws Exception {
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | SecurityException | java.io.IOException exception) {
+            assumeTrue(false, "Symbolic link fixtures are not supported in this test environment: "
+                    + exception.getMessage());
+        }
     }
 
     private static final class CapturingGateway implements OpenAiGateway {

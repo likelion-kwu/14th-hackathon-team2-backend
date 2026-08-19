@@ -91,15 +91,16 @@ public class OpenAiPhotoVerificationAnalyzer implements PhotoVerificationAnalyze
         } catch (ImageValidationException exception) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
-        if (input.objectCode() == null || input.gestureCode() == null
-                || !SAFE_CODE.matcher(input.objectCode()).matches()
-                || !SAFE_CODE.matcher(input.gestureCode()).matches()) {
+        if (input.objectCode() == null || !SAFE_CODE.matcher(input.objectCode()).matches()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
-        String objectDescription = SUPPORTED_OBJECTS.getOrDefault(
-                input.objectCode(),
-                input.objectCode().toLowerCase(java.util.Locale.ROOT).replace('_', ' ')
-        );
+        String objectDescription = SUPPORTED_OBJECTS.get(input.objectCode());
+        if (objectDescription == null) {
+            throw new BusinessException(ErrorCode.VERIFICATION_OBJECT_NOT_SUPPORTED);
+        }
+        if (input.gestureCode() == null || !SAFE_CODE.matcher(input.gestureCode()).matches()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+        }
         String request = "Required object: " + objectDescription
                 + " (code " + input.objectCode() + ")"
                 + "\nRequired hand gesture code: " + input.gestureCode();
