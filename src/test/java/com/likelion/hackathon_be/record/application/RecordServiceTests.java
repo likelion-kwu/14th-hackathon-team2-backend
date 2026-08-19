@@ -180,6 +180,78 @@ class RecordServiceTests {
     }
 
     @Test
+    void providesMonthlyCalendarInputsForEveryDisplayCase() {
+        LocalDate successDay = TODAY.minusDays(4);
+        LocalDate partialDay = TODAY.minusDays(3);
+        LocalDate failedDay = TODAY.minusDays(2);
+        LocalDate todoOnlyDay = TODAY.minusDays(1);
+        LocalDate futureDay = TODAY.plusDays(1);
+
+        DailyRoutine success = dailyRoutine(1L, 101L, RoutineCategory.SKIN, successDay, 8, 0, 9, 0);
+        DailyRoutine partialCompleted = dailyRoutine(
+                2L, 102L, RoutineCategory.DIET, partialDay, 8, 0, 9, 0
+        );
+        DailyRoutine partialMissed = dailyRoutine(
+                3L, 103L, RoutineCategory.HEALTH_FIT, partialDay, 10, 0, 11, 0
+        );
+        DailyRoutine failed = dailyRoutine(4L, 104L, RoutineCategory.WELL_BEING, failedDay, 8, 0, 9, 0);
+        DailyRoutine todo = dailyRoutine(5L, 105L, RoutineCategory.TO_DO, todoOnlyDay, 8, 0, 9, 0);
+        DailyRoutine today = dailyRoutine(6L, 106L, RoutineCategory.SKIN, TODAY, 10, 0, 11, 0);
+        DailyRoutine future = dailyRoutine(7L, 107L, RoutineCategory.DIET, futureDay, 8, 0, 9, 0);
+        List<DailyRoutine> dailyRoutines = List.of(
+                future,
+                today,
+                todo,
+                failed,
+                partialCompleted,
+                partialMissed,
+                success
+        );
+        givenRange(successDay, futureDay, dailyRoutines);
+        when(verificationRepository.findByDailyRoutineIdIn(List.of(7L, 6L, 5L, 4L, 2L, 3L, 1L)))
+                .thenReturn(List.of(
+                        verification(1L, VerificationType.PHOTO),
+                        verification(2L, VerificationType.CHECK),
+                        verification(5L, VerificationType.CHECK)
+                ));
+        when(dailySuccessRecordRepository.findServiceDatesByUserIdAndServiceDateBetween(
+                USER_ID,
+                successDay,
+                futureDay
+        )).thenReturn(List.of(successDay));
+
+        RecordResponse response = service.getRecords(successDay, futureDay);
+
+        assertThat(response.days()).extracting("serviceDate")
+                .containsExactly(futureDay, TODAY, todoOnlyDay, failedDay, partialDay, successDay);
+        assertThat(response.days()).extracting("dayStatus")
+                .containsExactly("IN_PROGRESS", "IN_PROGRESS", "NO_ROUTINE", "FAILED", "FAILED", "SUCCESS");
+        assertThat(response.days()).extracting("completedCount")
+                .containsExactly(0, 0, 0, 0, 1, 1);
+        assertThat(response.days()).extracting("totalCount")
+                .containsExactly(1, 1, 0, 1, 2, 1);
+        assertThat(response.days().stream().filter(day -> day.dayStatus().equals("SUCCESS"))).hasSize(1);
+        assertThat(response.days().get(2).routines()).singleElement()
+                .extracting("status", "verificationType")
+                .containsExactly("COMPLETED", "CHECK");
+    }
+
+    @Test
+    void todayWithNoCompletionBecomesFailedAfterAnEligibleRoutineWindowCloses() {
+        DailyRoutine missed = dailyRoutine(1L, 101L, RoutineCategory.SKIN, TODAY, 8, 0, 9, 0);
+        DailyRoutine upcoming = dailyRoutine(2L, 102L, RoutineCategory.DIET, TODAY, 12, 0, 13, 0);
+        givenRange(TODAY, TODAY, List.of(missed, upcoming));
+
+        RecordResponse response = service.getRecords(TODAY, TODAY);
+
+        assertThat(response.days()).singleElement().satisfies(day -> {
+            assertThat(day.dayStatus()).isEqualTo("FAILED");
+            assertThat(day.completedCount()).isZero();
+            assertThat(day.totalCount()).isEqualTo(2);
+        });
+    }
+
+    @Test
     void verifiedRoutineIsCompletedAndVerificationTypeIsProjected() {
         DailyRoutine routine = dailyRoutine(1L, 101L, RoutineCategory.SKIN, TODAY, 10, 0, 11, 0);
         givenRange(TODAY, TODAY, List.of(routine));
