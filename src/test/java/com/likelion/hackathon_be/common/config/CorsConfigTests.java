@@ -15,6 +15,7 @@ import org.springframework.web.filter.CorsFilter;
 class CorsConfigTests {
 
     private static final String FRONTEND_ORIGIN = "https://godlife.likelion.uk";
+    private static final String LOCAL_FRONTEND_ORIGIN = "http://localhost:5173";
 
     private final CorsFilter corsFilter = new CorsConfig().corsFilter();
 
@@ -37,6 +38,25 @@ class CorsConfigTests {
                 .contains("PATCH")
                 .contains("DELETE")
                 .contains("OPTIONS");
+        assertThat(response.getHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS).toLowerCase(Locale.ROOT))
+                .contains("authorization")
+                .contains("content-type");
+        assertThat(chainCalled).isFalse();
+    }
+
+    @Test
+    void preflightAllowsLocalFrontendBearerHeaders() throws Exception {
+        MockHttpServletRequest request = preflightRequest(LOCAL_FRONTEND_ORIGIN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+        FilterChain chain = (servletRequest, servletResponse) -> chainCalled.set(true);
+
+        corsFilter.doFilter(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_OK);
+        assertThat(response.getHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN)).isEqualTo(LOCAL_FRONTEND_ORIGIN);
+        assertThat(response.getHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS)).isNull();
+        assertThat(response.getHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS)).contains("POST");
         assertThat(response.getHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS).toLowerCase(Locale.ROOT))
                 .contains("authorization")
                 .contains("content-type");

@@ -10,7 +10,9 @@ import org.springframework.web.filter.CorsFilter;
 @Configuration
 public class CorsConfig {
 
-    private static final List<String> ALLOWED_ORIGINS = List.of("https://godlife.likelion.uk");
+    private static final List<String> ALLOWED_ORIGINS = List.of(
+            "https://godlife.likelion.uk",
+            "http://localhost:5173");
     private static final List<String> ALLOWED_METHODS = List.of(
             "GET",
             "POST",
