@@ -176,11 +176,11 @@ public class OpenAiSpeechStyleAnalyzer {
         List<SpeechExampleCandidate> examples = new ArrayList<>();
         Set<String> unique = new HashSet<>();
         Map<String, SpeechExampleCategory> userCandidates = new HashMap<>();
+        Set<SpeechExampleCategory> userCandidateCategories = new HashSet<>();
         for (Map<String, String> candidate : candidates) {
-            userCandidates.put(
-                    normalize(candidate.get("content")),
-                    SpeechExampleCategory.valueOf(candidate.get("category"))
-            );
+            SpeechExampleCategory category = SpeechExampleCategory.valueOf(candidate.get("category"));
+            userCandidates.put(normalize(candidate.get("content")), category);
+            userCandidateCategories.add(category);
         }
         try {
             for (JsonNode node : root.path("examples")) {
@@ -197,8 +197,11 @@ public class OpenAiSpeechStyleAnalyzer {
                         && (actualCategory == null || actualCategory != category)) {
                     throw new IllegalArgumentException("USER_MESSAGE example was not selected from candidates");
                 }
-                if (sourceType == SpeechExampleSourceType.AI_GENERATED && actualCategory != null) {
-                    throw new IllegalArgumentException("Existing user candidate must retain USER_MESSAGE provenance");
+                if (sourceType == SpeechExampleSourceType.AI_GENERATED
+                        && (actualCategory != null
+                        || userCandidateCategories.contains(category)
+                        || overCopiesUserCandidate(normalized, userCandidates.keySet()))) {
+                    throw new IllegalArgumentException("AI_GENERATED is allowed only for a missing category");
                 }
                 examples.add(new SpeechExampleCandidate(
                         category,
@@ -261,6 +264,15 @@ public class OpenAiSpeechStyleAnalyzer {
 
     private boolean containsForbidden(String content) {
         return FORBIDDEN.stream().anyMatch(content::contains);
+    }
+
+    private boolean overCopiesUserCandidate(String generated, Set<String> userCandidates) {
+        for (String candidate : userCandidates) {
+            if (codePointLength(candidate) >= 8 && generated.contains(candidate)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<String> safePatternValues(JsonNode node) {

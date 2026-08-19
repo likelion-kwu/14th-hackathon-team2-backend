@@ -147,6 +147,33 @@ class AvatarAssetTests {
     }
 
     @Test
+    void healthAndDietDefaultStagesChangeOnlyTheHumanFacePresetArea() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        AvatarTemplateAssets templates = new AvatarTemplateAssets(processor);
+        templates.initialize();
+
+        for (AvatarGrowthTrack track : List.of(AvatarGrowthTrack.HEALTH_FIT, AvatarGrowthTrack.DIET)) {
+            BufferedImage stageOne = processor.decode(processor.createDefaultStage(templates.template(), track, 1));
+            BufferedImage stageThree = processor.decode(processor.createDefaultStage(templates.template(), track, 3));
+
+            int changedFacePixels = 0;
+            for (int y = 20; y < 145; y++) {
+                for (int x = 75; x < 175; x++) {
+                    if (stageOne.getRGB(x, y) != stageThree.getRGB(x, y)) {
+                        changedFacePixels++;
+                    }
+                }
+            }
+            assertThat(changedFacePixels).isGreaterThan(500);
+            for (int y = 160; y < stageOne.getHeight(); y++) {
+                for (int x = 0; x < stageOne.getWidth(); x++) {
+                    assertThat(stageOne.getRGB(x, y)).isEqualTo(stageThree.getRGB(x, y));
+                }
+            }
+        }
+    }
+
+    @Test
     void preservesExistingAlphaWhileRemovingConnectedLightBackground() throws Exception {
         AvatarImageProcessor processor = new AvatarImageProcessor();
         BufferedImage source = new BufferedImage(20, 40, BufferedImage.TYPE_INT_ARGB);
