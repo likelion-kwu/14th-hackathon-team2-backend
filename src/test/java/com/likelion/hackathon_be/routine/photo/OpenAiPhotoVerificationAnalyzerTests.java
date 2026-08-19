@@ -92,6 +92,21 @@ class OpenAiPhotoVerificationAnalyzerTests {
     }
 
     @Test
+    void rejectsUnsupportedObjectBeforeCallingAi() throws Exception {
+        StubGateway gateway = new StubGateway();
+        PhotoVerificationInput valid = input();
+        PhotoVerificationInput unsupported = new PhotoVerificationInput(
+                valid.image(), valid.mediaType(), "UNKNOWN_OBJECT", valid.gestureCode()
+        );
+
+        assertThatThrownBy(() -> analyzer(gateway).analyze(unsupported))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.VERIFICATION_OBJECT_NOT_SUPPORTED));
+        assertThat(gateway.calls).isZero();
+    }
+
+    @Test
     void rejectsSpoofedMediaTypeBeforeCallingAi() throws Exception {
         StubGateway gateway = new StubGateway();
         PhotoVerificationInput valid = input();
@@ -145,7 +160,7 @@ class OpenAiPhotoVerificationAnalyzerTests {
     }
 
     private PhotoVerificationInput input() throws Exception {
-        return new PhotoVerificationInput(pngImage(), "image/png", "CLEANSER", "THUMBS_UP");
+        return new PhotoVerificationInput(pngImage(), "image/png", "CUP", "THUMBS_UP");
     }
 
     private byte[] pngImage() throws Exception {

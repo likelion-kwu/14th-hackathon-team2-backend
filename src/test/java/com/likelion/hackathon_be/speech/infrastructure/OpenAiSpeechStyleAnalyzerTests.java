@@ -56,6 +56,39 @@ class OpenAiSpeechStyleAnalyzerTests {
         assertThat(gateway.calls).isEqualTo(3);
     }
 
+    @Test
+    void rejectsAiGeneratedReplacementWhenThatCategoryHasARealCandidate() throws Exception {
+        QueueGateway gateway = new QueueGateway();
+        gateway.responses.add(analysisResponse());
+        JsonNode unnecessaryGenerated = objectMapper.readTree("""
+                {"examples":[{"category":"GENERAL","sourceType":"AI_GENERATED","content":"오늘은 가볍게 해보자"}]}
+                """);
+        gateway.responses.add(unnecessaryGenerated);
+        gateway.responses.add(unnecessaryGenerated);
+
+        assertThatThrownBy(() -> new OpenAiSpeechStyleAnalyzer(gateway, objectMapper).analyze(data(Map.of())))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.AI_RESPONSE_INVALID));
+        assertThat(gateway.calls).isEqualTo(3);
+    }
+
+    @Test
+    void allowsAiGeneratedExampleOnlyForMissingCategory() throws Exception {
+        QueueGateway gateway = new QueueGateway();
+        gateway.responses.add(analysisResponse());
+        gateway.responses.add(objectMapper.readTree("""
+                {"examples":[
+                  {"category":"GENERAL","sourceType":"USER_MESSAGE","content":"근데 오늘은 해볼 만해"},
+                  {"category":"QUESTION","sourceType":"AI_GENERATED","content":"지금 하나 시작할까?"}
+                ]}
+                """));
+
+        AnalyzedSpeechProfile analyzed = new OpenAiSpeechStyleAnalyzer(gateway, objectMapper).analyze(data(Map.of()));
+
+        assertThat(analyzed.profile().examples()).hasSize(2);
+        assertThat(gateway.calls).isEqualTo(2);
+    }
+
     private PreprocessedSpeechData data(Map<String, Integer> profanity) {
         return new PreprocessedSpeechData(
                 List.of(new PreprocessedSpeechMessage("m-001", "[PERSON] 오늘 할 거야?", "근데 오늘은 해볼 만해")),

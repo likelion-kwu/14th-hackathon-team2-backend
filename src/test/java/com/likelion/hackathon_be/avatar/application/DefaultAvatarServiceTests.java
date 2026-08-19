@@ -34,6 +34,7 @@ import com.likelion.hackathon_be.user.domain.User;
 import com.likelion.hackathon_be.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -123,6 +124,44 @@ class DefaultAvatarServiceTests {
     }
 
     @Test
+    void initialGenerationStoresAndActivatesTheCompleteGeneratedSet() throws Exception {
+        String generatedKey = "generated/101/00000000-0000-0000-0000-000000000001";
+        List<byte[]> stages = List.of(new byte[]{1}, new byte[]{2}, new byte[]{3});
+        when(avatarRepository.findByUserId(USER_ID)).thenReturn(Optional.empty());
+        when(avatarRepository.findByUserIdForUpdate(USER_ID)).thenReturn(Optional.empty());
+        when(avatarSetGenerator.generate(AvatarGrowthTrack.SKIN, null)).thenReturn(stages);
+        when(avatarStorage.storeGenerated(USER_ID, stages)).thenReturn(generatedKey);
+        when(avatarRepository.save(any(Avatar.class))).thenAnswer(invocation -> {
+            Avatar saved = invocation.getArgument(0);
+            setField(saved, "id", AVATAR_ID);
+            return saved;
+        });
+
+        CreateAvatarResponse response = service.createAvatar(AvatarGrowthTrack.SKIN, null);
+
+        assertThat(response.created()).isTrue();
+        assertThat(response.assetSource()).isEqualTo("GENERATED");
+        assertThat(response.fallbackUsed()).isFalse();
+        verify(avatarStorage, never()).deleteGenerated(generatedKey);
+    }
+
+    @Test
+    void initialDatabaseFailureDeletesTheUnreferencedGeneratedSet() {
+        String generatedKey = "generated/101/00000000-0000-0000-0000-000000000001";
+        List<byte[]> stages = List.of(new byte[]{1}, new byte[]{2}, new byte[]{3});
+        when(avatarRepository.findByUserId(USER_ID)).thenReturn(Optional.empty());
+        when(avatarRepository.findByUserIdForUpdate(USER_ID)).thenReturn(Optional.empty());
+        when(avatarSetGenerator.generate(AvatarGrowthTrack.SKIN, null)).thenReturn(stages);
+        when(avatarStorage.storeGenerated(USER_ID, stages)).thenReturn(generatedKey);
+        when(avatarRepository.save(any(Avatar.class))).thenThrow(new IllegalStateException("database unavailable"));
+
+        assertThatThrownBy(() -> service.createAvatar(AvatarGrowthTrack.SKIN, null))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(avatarStorage).deleteGenerated(generatedKey);
+    }
+
+    @Test
     void regenerationFailurePreservesExistingSetAndDoesNotConsumeAllowance() throws Exception {
         Avatar avatar = avatar("generated/101/original", AvatarAssetSource.GENERATED);
         when(avatarRepository.findByUserId(USER_ID)).thenReturn(Optional.of(avatar));
@@ -160,6 +199,45 @@ class DefaultAvatarServiceTests {
         assertThat(response.regenerationRemaining()).isZero();
         verify(avatarStorage).deleteGenerated(oldKey);
         verify(avatarStorage, never()).deleteGenerated(newKey);
+    }
+
+    @Test
+    void regenerationSwapFailureDeletesOnlyTheNewUnreferencedSet() throws Exception {
+        String oldKey = "generated/101/00000000-0000-0000-0000-000000000001";
+        String newKey = "generated/101/00000000-0000-0000-0000-000000000002";
+        Avatar avatar = avatar(oldKey, AvatarAssetSource.GENERATED);
+        List<byte[]> stages = List.of(new byte[]{1}, new byte[]{2}, new byte[]{3});
+        when(avatarRepository.findByUserId(USER_ID)).thenReturn(Optional.of(avatar));
+        when(avatarRepository.findByUserIdForUpdate(USER_ID))
+                .thenThrow(new IllegalStateException("database unavailable"));
+        when(avatarSetGenerator.generate(AvatarGrowthTrack.SKIN, null)).thenReturn(stages);
+        when(avatarStorage.storeGenerated(USER_ID, stages)).thenReturn(newKey);
+
+        assertThatThrownBy(() -> service.regenerateAvatar(null)).isInstanceOf(IllegalStateException.class);
+
+        assertThat(avatar.getAssetSetKey()).isEqualTo(oldKey);
+        assertThat(avatar.getRegenerationCount()).isZero();
+        verify(avatarStorage).deleteGenerated(newKey);
+        verify(avatarStorage, never()).deleteGenerated(oldKey);
+    }
+
+    @Test
+    void imageReadReloadsCommittedAssetKeyAfterConcurrentSwap() throws Exception {
+        String oldKey = "generated/101/00000000-0000-0000-0000-000000000001";
+        String newKey = "generated/101/00000000-0000-0000-0000-000000000002";
+        Avatar oldAvatar = avatar(oldKey, AvatarAssetSource.GENERATED);
+        Avatar newAvatar = avatar(newKey, AvatarAssetSource.GENERATED);
+        byte[] expected = new byte[]{9, 8, 7};
+        when(avatarRepository.findByUserId(USER_ID)).thenReturn(Optional.of(oldAvatar), Optional.of(newAvatar));
+        when(storyUnlockRepository.findMaximumAvatarStage(USER_ID)).thenReturn(Optional.of(2));
+        when(avatarStorage.stageResource(oldKey, 2)).thenReturn(null);
+        when(avatarStorage.stageResource(newKey, 2)).thenReturn(new ByteArrayResource(expected));
+
+        byte[] actual = service.getMyAvatarImage().getBody().getInputStream().readAllBytes();
+
+        assertThat(actual).containsExactly(expected);
+        verify(avatarStorage).stageResource(oldKey, 2);
+        verify(avatarStorage).stageResource(newKey, 2);
     }
 
     @Test
