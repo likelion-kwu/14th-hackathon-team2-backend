@@ -5,12 +5,30 @@ import com.likelion.hackathon_be.routine.domain.RoutineCategory;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface DailyRoutineRepository extends JpaRepository<DailyRoutine, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select d
+            from DailyRoutine d
+            where d.id = :dailyRoutineId
+              and d.userId = :userId
+            """)
+    Optional<DailyRoutine> findOwnedByIdForUpdate(
+            @Param("dailyRoutineId") Long dailyRoutineId,
+            @Param("userId") Long userId
+    );
+
+    Optional<DailyRoutine> findFirstByUserIdAndIdNotAndMissionTemplateIdIsNotNullOrderByUpdatedAtDescIdDesc(
+            Long userId,
+            Long dailyRoutineId
+    );
 
     List<DailyRoutine> findByRoutineIdAndServiceDateBetween(
             Long routineId,
