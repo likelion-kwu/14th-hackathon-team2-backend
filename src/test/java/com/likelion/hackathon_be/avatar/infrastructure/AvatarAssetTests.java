@@ -167,6 +167,18 @@ class AvatarAssetTests {
     }
 
     @Test
+    void canonicalMiiTemplateRemovesItsBlueMatteWithoutErasingTheWhiteShirt() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        AvatarTemplateAssets templates = new AvatarTemplateAssets(processor);
+        templates.initialize();
+        BufferedImage template = templates.template();
+
+        assertThat(template.getRGB(0, 0)).isZero();
+        assertThat((template.getRGB(320, 640) >>> 24) & 0xff).isEqualTo(255);
+        assertThat((template.getRGB(320, 1_200) >>> 24) & 0xff).isZero();
+    }
+
+    @Test
     void healthAndDietDefaultStagesChangeOnlyTheHumanFacePresetArea() throws Exception {
         AvatarImageProcessor processor = new AvatarImageProcessor();
         AvatarTemplateAssets templates = new AvatarTemplateAssets(processor);
@@ -209,7 +221,7 @@ class AvatarAssetTests {
 
         BufferedImage prepared = processor.prepareTemplate(png(source));
 
-        assertThat((prepared.getRGB(0, 0) >>> 24) & 0xff).isZero();
+        assertThat(prepared.getRGB(0, 0)).isZero();
         assertThat((prepared.getRGB(320, 640) >>> 24) & 0xff).isBetween(120, 136);
     }
 
@@ -230,7 +242,39 @@ class AvatarAssetTests {
             assertThat(gateway.inputs.get(1)).isEqualTo(gateway.inputs.get(2));
             assertThat(gateway.inputs.get(1)).isNotEqualTo(stageOneRaw);
             assertThat(gateway.prompts.subList(1, 3))
-                    .allSatisfy(prompt -> assertThat(prompt).contains("exact face identity"));
+                    .allSatisfy(prompt -> assertThat(prompt)
+                            .contains("exact face identity")
+                            .contains("Body size and proportions must remain identical"));
+            assertThat(gateway.masks.get(0)).isNotEqualTo(gateway.masks.get(1));
+            assertThat(gateway.masks.get(1)).isEqualTo(gateway.masks.get(2));
+            assertThat(gateway.sizes).containsOnly("640x1280");
+            assertThat(gateway.qualities).containsOnly("medium");
+        } finally {
+            generator.shutdown();
+        }
+    }
+
+    @Test
+    void stageOneUsesThePhotoOnlyAsAnIdentityReference() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        AvatarTemplateAssets templates = new AvatarTemplateAssets(processor);
+        templates.initialize();
+        CapturingGateway gateway = new CapturingGateway(image(Color.ORANGE), image(Color.YELLOW));
+        OpenAiAvatarSetGenerator generator = new OpenAiAvatarSetGenerator(gateway, templates, processor);
+
+        try {
+            generator.generate(
+                    AvatarGrowthTrack.WELL_BEING,
+                    new AvatarFaceReference(new byte[]{1, 2, 3}, "image/png")
+            );
+
+            assertThat(gateway.inputCounts).containsExactly(2, 1, 1);
+            assertThat(gateway.prompts.get(0))
+                    .contains("face-only identity reference")
+                    .contains("Never copy its body, clothing, pose, background")
+                    .contains("the avatar must have no glasses")
+                    .contains("exact #E5F7FF matte")
+                    .contains("stage 1 of 3");
         } finally {
             generator.shutdown();
         }
@@ -247,7 +291,7 @@ class AvatarAssetTests {
         byte[] composedBytes = processor.composeMaskedEdit(
                 edited,
                 base,
-                processor.decode(templates.faceMaskPng())
+                processor.decode(templates.identityMaskPng())
         );
         BufferedImage composed = processor.decode(composedBytes);
 
@@ -255,6 +299,89 @@ class AvatarAssetTests {
         assertThat(composed.getRGB(320, 150) & 0x00ffffff).isEqualTo(Color.MAGENTA.getRGB() & 0x00ffffff);
         assertThat(processor.isValidFinalPng(processor.toFinalPng(composedBytes))).isTrue();
         assertThat(processor.isValidFinalPng(processor.toFinalPng(image(Color.BLACK)))).isFalse();
+    }
+
+    @Test
+    void finalAssetValidationRejectsEmptyOrTinyForeground() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        BufferedImage empty = new BufferedImage(
+                AvatarImageProcessor.FINAL_WIDTH,
+                AvatarImageProcessor.FINAL_HEIGHT,
+                BufferedImage.TYPE_INT_ARGB
+        );
+        BufferedImage tiny = new BufferedImage(
+                AvatarImageProcessor.FINAL_WIDTH,
+                AvatarImageProcessor.FINAL_HEIGHT,
+                BufferedImage.TYPE_INT_ARGB
+        );
+        Graphics2D graphics = tiny.createGraphics();
+        graphics.setColor(Color.ORANGE);
+        graphics.fillOval(100, 30, 50, 50);
+        graphics.dispose();
+
+        assertThat(processor.isValidFinalPng(processor.encodePng(empty))).isFalse();
+        assertThat(processor.isValidFinalPng(processor.encodePng(tiny))).isFalse();
+        assertThat(processor.isValidFinalPng(new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}))
+                .isFalse();
+    }
+
+    @Test
+    void partialEditStrengthKeepsStageOneAsTheDominantFaceReference() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        AvatarTemplateAssets templates = new AvatarTemplateAssets(processor);
+        templates.initialize();
+        BufferedImage base = templates.template();
+        BufferedImage mask = processor.createFaceEvolutionMask();
+        byte[] edited = image(Color.MAGENTA);
+
+        BufferedImage full = processor.decode(processor.composeMaskedEdit(edited, base, mask, 1.0d));
+        BufferedImage partial = processor.decode(processor.composeMaskedEdit(edited, base, mask, 0.08d));
+        int baseRed = (base.getRGB(320, 250) >>> 16) & 0xff;
+        int fullRed = (full.getRGB(320, 250) >>> 16) & 0xff;
+        int partialRed = (partial.getRGB(320, 250) >>> 16) & 0xff;
+
+        assertThat(Math.abs(partialRed - baseRed)).isLessThan(Math.abs(fullRed - baseRed));
+        assertThatThrownBy(() -> processor.composeMaskedEdit(edited, base, mask, 1.01d))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void identityMaskIncludesFaceAndLongHairButKeepsTheLowerBodyLocked() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        BufferedImage mask = processor.createIdentityMask();
+
+        assertThat((mask.getRGB(320, 150) >>> 24) & 0xff).isZero();
+        assertThat((mask.getRGB(170, 500) >>> 24) & 0xff).isZero();
+        assertThat((mask.getRGB(470, 500) >>> 24) & 0xff).isZero();
+        assertThat((mask.getRGB(320, 800) >>> 24) & 0xff).isEqualTo(255);
+    }
+
+    @Test
+    void evolutionMaskKeepsHairAndBodyLocked() {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        BufferedImage mask = processor.createFaceEvolutionMask();
+
+        assertThat((mask.getRGB(320, 250) >>> 24) & 0xff).isZero();
+        assertThat((mask.getRGB(170, 500) >>> 24) & 0xff).isEqualTo(255);
+        assertThat((mask.getRGB(470, 500) >>> 24) & 0xff).isEqualTo(255);
+        assertThat((mask.getRGB(320, 800) >>> 24) & 0xff).isEqualTo(255);
+    }
+
+    @Test
+    void removesPaleSkyBlueMatteAndPreservesWarmWhiteClothing() throws Exception {
+        AvatarImageProcessor processor = new AvatarImageProcessor();
+        BufferedImage source = new BufferedImage(40, 80, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = source.createGraphics();
+        graphics.setColor(new Color(229, 247, 255));
+        graphics.fillRect(0, 0, source.getWidth(), source.getHeight());
+        graphics.setColor(new Color(254, 249, 242));
+        graphics.fillRect(12, 20, 16, 45);
+        graphics.dispose();
+
+        BufferedImage prepared = processor.prepareTemplate(png(source));
+
+        assertThat(prepared.getRGB(0, 0)).isZero();
+        assertThat((prepared.getRGB(320, 640) >>> 24) & 0xff).isEqualTo(255);
     }
 
     @Test
@@ -374,6 +501,10 @@ class AvatarAssetTests {
         private final AtomicInteger calls = new AtomicInteger();
         private final List<byte[]> inputs = new CopyOnWriteArrayList<>();
         private final List<String> prompts = new CopyOnWriteArrayList<>();
+        private final List<String> sizes = new CopyOnWriteArrayList<>();
+        private final List<String> qualities = new CopyOnWriteArrayList<>();
+        private final List<Integer> inputCounts = new CopyOnWriteArrayList<>();
+        private final List<byte[]> masks = new CopyOnWriteArrayList<>();
 
         private CapturingGateway(byte[] stageOne, byte[] laterStage) {
             this.stageOne = stageOne;
@@ -409,6 +540,10 @@ class AvatarAssetTests {
         ) {
             inputs.add(images.get(0).bytes());
             prompts.add(prompt);
+            sizes.add(size);
+            qualities.add(quality);
+            inputCounts.add(images.size());
+            masks.add(mask.bytes());
             return calls.incrementAndGet() == 1 ? stageOne : laterStage;
         }
     }

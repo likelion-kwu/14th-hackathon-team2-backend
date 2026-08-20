@@ -19,6 +19,7 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class AvatarFacePhotoValidator {
     private static final String PROMPT_VERSION = "avatar-face-validation-v1";
+    static final int MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
     private static final String INSTRUCTIONS = """
             Validate only whether this is a usable face reference: exactly one person, front-facing or close to
             front-facing, and enough of the face visible without major mask/hand occlusion. Do not identify the
@@ -28,15 +29,18 @@ public class AvatarFacePhotoValidator {
 
     private final OpenAiGateway gateway;
     private final ImageInputValidator imageValidator;
+    private final AvatarFaceReferenceNormalizer faceReferenceNormalizer;
     private final JsonNode schema;
 
     public AvatarFacePhotoValidator(
             OpenAiGateway gateway,
             ImageInputValidator imageValidator,
+            AvatarFaceReferenceNormalizer faceReferenceNormalizer,
             ObjectMapper objectMapper
     ) {
         this.gateway = gateway;
         this.imageValidator = imageValidator;
+        this.faceReferenceNormalizer = faceReferenceNormalizer;
         this.schema = objectMapper.readTree("""
                 {
                   "type":"object",
@@ -55,15 +59,16 @@ public class AvatarFacePhotoValidator {
         if (photo == null || photo.isEmpty()) {
             return null;
         }
-        if (photo.getSize() > ImageInputValidator.DEFAULT_MAX_BYTES) {
+        if (photo.getSize() > MAX_UPLOAD_BYTES) {
             throw new BusinessException(ErrorCode.AVATAR_FACE_PHOTO_INVALID);
         }
         ValidatedImage image;
         try {
-            image = imageValidator.validate(photo.getBytes(), photo.getContentType());
+            image = imageValidator.validate(photo.getBytes(), photo.getContentType(), MAX_UPLOAD_BYTES);
         } catch (IOException | ImageValidationException exception) {
             throw new BusinessException(ErrorCode.AVATAR_FACE_PHOTO_INVALID);
         }
+        AvatarFaceReference faceReference = faceReferenceNormalizer.normalize(image);
 
         for (int attempt = 0; attempt < 2; attempt++) {
             JsonNode result;
@@ -73,7 +78,11 @@ public class AvatarFacePhotoValidator {
                         PROMPT_VERSION,
                         INSTRUCTIONS,
                         attempt == 0 ? "Check this face reference." : "The previous output was invalid. Re-evaluate.",
-                        List.of(new OpenAiImageInput(image.bytes(), image.mediaType(), "high")),
+                        List.of(new OpenAiImageInput(
+                                faceReference.bytes(),
+                                faceReference.mediaType(),
+                                "high"
+                        )),
                         schema,
                         100
                 );
@@ -91,7 +100,7 @@ public class AvatarFacePhotoValidator {
                         || !result.path("faceVisible").booleanValue()) {
                     throw new BusinessException(ErrorCode.AVATAR_FACE_PHOTO_INVALID);
                 }
-                return new AvatarFaceReference(image.bytes(), image.mediaType());
+                return faceReference;
             }
         }
         throw new IllegalStateException("Invalid face validation response");

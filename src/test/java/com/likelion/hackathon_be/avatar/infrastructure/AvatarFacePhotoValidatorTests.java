@@ -2,6 +2,7 @@ package com.likelion.hackathon_be.avatar.infrastructure;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
@@ -94,8 +95,36 @@ class AvatarFacePhotoValidatorTests {
                         assertThat(exception.kind()).isEqualTo(OpenAiGatewayException.Kind.UNAVAILABLE));
     }
 
+    @Test
+    void normalizesLargeFacePhotoBeforeSendingItToOpenAi() throws Exception {
+        StubGateway gateway = new StubGateway();
+        gateway.responses.add(objectMapper.readTree("""
+                {"singlePerson":true,"nearFrontal":true,"faceVisible":true}
+                """));
+        BufferedImage source = new BufferedImage(1_200, 1_600, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(source, "png", output);
+        MockMultipartFile largePhoto = new MockMultipartFile(
+                "facePhoto", "large.png", "image/png", output.toByteArray()
+        );
+
+        AvatarFaceReference reference = validator(gateway).validate(largePhoto);
+        BufferedImage normalized = ImageIO.read(new ByteArrayInputStream(reference.bytes()));
+
+        assertThat(reference.mediaType()).isEqualTo("image/jpeg");
+        assertThat(normalized.getWidth()).isEqualTo(768);
+        assertThat(normalized.getHeight()).isEqualTo(AvatarFaceReferenceNormalizer.MAX_EDGE);
+        assertThat(reference.bytes().length).isLessThanOrEqualTo(ImageInputValidator.DEFAULT_MAX_BYTES);
+        assertThat(gateway.images.get(0).get(0).bytes()).containsExactly(reference.bytes());
+    }
+
     private AvatarFacePhotoValidator validator(OpenAiGateway gateway) {
-        return new AvatarFacePhotoValidator(gateway, new ImageInputValidator(), objectMapper);
+        return new AvatarFacePhotoValidator(
+                gateway,
+                new ImageInputValidator(),
+                new AvatarFaceReferenceNormalizer(),
+                objectMapper
+        );
     }
 
     private MockMultipartFile photo() throws Exception {

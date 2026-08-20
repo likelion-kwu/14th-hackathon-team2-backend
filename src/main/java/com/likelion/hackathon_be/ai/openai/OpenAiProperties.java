@@ -20,7 +20,7 @@ public record OpenAiProperties(
         imageModel = defaultIfBlank(imageModel, "gpt-image-2");
         connectTimeout = connectTimeout == null ? Duration.ofSeconds(10) : connectTimeout;
         responseTimeout = responseTimeout == null ? Duration.ofSeconds(60) : responseTimeout;
-        imageTimeout = imageTimeout == null ? Duration.ofSeconds(70) : imageTimeout;
+        imageTimeout = imageTimeout == null ? Duration.ofSeconds(130) : imageTimeout;
     }
 
     public boolean configured() {

@@ -12,7 +12,8 @@ public class AvatarTemplateAssets {
     private final AvatarImageProcessor imageProcessor;
     private BufferedImage template;
     private byte[] templatePng;
-    private byte[] faceMaskPng;
+    private byte[] identityMaskPng;
+    private byte[] faceEvolutionMaskPng;
 
     public AvatarTemplateAssets(AvatarImageProcessor imageProcessor) {
         this.imageProcessor = imageProcessor;
@@ -26,7 +27,8 @@ public class AvatarTemplateAssets {
         }
         this.template = imageProcessor.prepareTemplate(source);
         this.templatePng = imageProcessor.encodePng(template);
-        this.faceMaskPng = imageProcessor.encodePng(imageProcessor.createFaceMask());
+        this.identityMaskPng = imageProcessor.encodePng(imageProcessor.createIdentityMask());
+        this.faceEvolutionMaskPng = imageProcessor.encodePng(imageProcessor.createFaceEvolutionMask());
     }
 
     public BufferedImage template() {
@@ -37,7 +39,11 @@ public class AvatarTemplateAssets {
         return templatePng.clone();
     }
 
-    public byte[] faceMaskPng() {
-        return faceMaskPng.clone();
+    public byte[] identityMaskPng() {
+        return identityMaskPng.clone();
+    }
+
+    public byte[] faceEvolutionMaskPng() {
+        return faceEvolutionMaskPng.clone();
     }
 }

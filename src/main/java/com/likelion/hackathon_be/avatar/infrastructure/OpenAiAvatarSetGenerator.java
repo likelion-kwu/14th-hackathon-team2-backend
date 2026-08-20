@@ -16,9 +16,9 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class OpenAiAvatarSetGenerator {
-    private static final String PROMPT_VERSION = "avatar-generation-v2";
-    private static final String SIZE = "640x1280";
-    private static final String QUALITY = "low";
+    private static final String PROMPT_VERSION = "avatar-generation-v5";
+    private static final String SIZE = AvatarImageProcessor.WORK_WIDTH + "x" + AvatarImageProcessor.WORK_HEIGHT;
+    private static final String QUALITY = "medium";
 
     private final OpenAiGateway gateway;
     private final AvatarTemplateAssets templateAssets;
@@ -44,7 +44,8 @@ public class OpenAiAvatarSetGenerator {
             throw new AvatarGenerationException("OpenAI image generation is not configured");
         }
         byte[] template = templateAssets.templatePng();
-        byte[] mask = templateAssets.faceMaskPng();
+        byte[] identityMask = templateAssets.identityMaskPng();
+        byte[] faceEvolutionMask = templateAssets.faceEvolutionMaskPng();
         List<OpenAiImageInput> stageOneInputs = new ArrayList<>();
         stageOneInputs.add(new OpenAiImageInput(template, "image/png"));
         if (faceReference != null) {
@@ -54,15 +55,17 @@ public class OpenAiAvatarSetGenerator {
         GeneratedStage stageOne = generateWithRetry(
                 stagePrompt(track, 1, faceReference != null),
                 stageOneInputs,
-                mask,
-                templateAssets.template()
+                identityMask,
+                templateAssets.template(),
+                1.0d
         );
         CompletableFuture<GeneratedStage> stageTwo = CompletableFuture.supplyAsync(
                 () -> generateWithRetry(
                         stagePrompt(track, 2, false),
                         List.of(new OpenAiImageInput(stageOne.composed(), "image/png")),
-                        mask,
-                        imageProcessor.decode(stageOne.composed())
+                        faceEvolutionMask,
+                        imageProcessor.decode(stageOne.composed()),
+                        evolutionStrength(2)
                 ),
                 stageExecutor
         );
@@ -70,8 +73,9 @@ public class OpenAiAvatarSetGenerator {
                 () -> generateWithRetry(
                         stagePrompt(track, 3, false),
                         List.of(new OpenAiImageInput(stageOne.composed(), "image/png")),
-                        mask,
-                        imageProcessor.decode(stageOne.composed())
+                        faceEvolutionMask,
+                        imageProcessor.decode(stageOne.composed()),
+                        evolutionStrength(3)
                 ),
                 stageExecutor
         );
@@ -99,7 +103,8 @@ public class OpenAiAvatarSetGenerator {
             String prompt,
             List<OpenAiImageInput> inputs,
             byte[] mask,
-            java.awt.image.BufferedImage base
+            java.awt.image.BufferedImage base,
+            double editStrength
     ) {
         RuntimeException lastFailure = null;
         for (int attempt = 0; attempt < 2; attempt++) {
@@ -112,7 +117,12 @@ public class OpenAiAvatarSetGenerator {
                         SIZE,
                         QUALITY
                 );
-                byte[] composed = imageProcessor.composeMaskedEdit(generated, base, imageProcessor.decode(mask));
+                byte[] composed = imageProcessor.composeMaskedEdit(
+                        generated,
+                        base,
+                        imageProcessor.decode(mask),
+                        editStrength
+                );
                 return new GeneratedStage(composed);
             } catch (RuntimeException exception) {
                 lastFailure = exception;
@@ -128,22 +138,57 @@ public class OpenAiAvatarSetGenerator {
     private record GeneratedStage(byte[] composed) {
     }
 
+    private double evolutionStrength(int stage) {
+        return stage == 2 ? 0.08d : 0.15d;
+    }
+
     private String stagePrompt(AvatarGrowthTrack track, int stage, boolean hasFaceReference) {
         String personalization;
         if (stage > 1) {
-            personalization = "Keep the exact face identity and recognizable facial features from the first image. ";
+            personalization = "Keep the exact face identity, hairstyle, hair color, skin tone, and facial geometry "
+                    + "from the first image. Do not redesign the person. ";
         } else if (hasFaceReference) {
-            personalization = "Use the second image only as a subtle reference for face shape, eyes, and overall facial impression. ";
+            personalization = "The second image is a face-only identity reference. Translate its general face "
+                    + "shape, skin tone, hairstyle, hair color, eyebrows, eye shape and spacing, nose, and mouth "
+                    + "into simplified game-avatar geometry. Never copy its body, clothing, pose, background, "
+                    + "camera, lighting, eyewear, jewelry, accessories, or photographic skin texture. Even if "
+                    + "the person wears glasses, the avatar must have no glasses. ";
         } else {
-            personalization = "Keep the existing neutral template face identity. ";
+            personalization = "Keep the existing neutral template face identity and hairstyle. ";
         }
         return """
-                Edit only the transparent face-mask region of the first image. Preserve the exact 2D flat human
-                avatar, canvas, full-body pose, body proportions, clothing, outline, body position, and all
-                pixels outside the mask. Do not add accessories or text. Never change body shape. %s
-                Apply this fictional game preset, not a diagnosis or prediction: %s. This is stage %d of 3.
-                Keep the same human identity across stages and return a single centered full-body human avatar.
-                """.formatted(personalization, preset(track, stage), stage);
+                The first image is the authoritative canonical avatar template. Edit only the transparent
+                identity-and-hair mask region of that first image and preserve every pixel outside the mask.
+                Keep its exact full-body composition, compact oversized-head proportions, upright front-facing
+                pose, body silhouette, white short-sleeve T-shirt, black shorts, white socks without shoes,
+                camera, framing, scale, lighting, and position. Never change the body because of the person.
+
+                Render a polished standardized 3D Mii-inspired game avatar: smooth rounded geometry, clean oval
+                eyes, simplified eyebrows, small stylized nose, simple friendly smile, matte-to-semi-matte
+                surfaces, soft studio lighting, and no realistic pores or photographic detail. Do not produce
+                anime, photorealism, a realistic 3D human, text, logos, accessories, props, or scenery.
+
+                %s
+                Apply only this fictional visual growth preset, never a diagnosis or health prediction: %s.
+                %s
+                This is stage %d of 3. Body size and proportions must remain identical across every stage.
+                Use a uniform exact #E5F7FF matte wherever a temporary background is needed; no gradient.
+                Return one centered full-body avatar on the same 1:2 canvas.
+                """.formatted(personalization, preset(track, stage), evolutionConstraints(track, stage), stage);
+    }
+
+    private String evolutionConstraints(AvatarGrowthTrack track, int stage) {
+        if (stage == 1) {
+            return "Do not add glasses or any other accessory.";
+        }
+        return switch (track) {
+            case SKIN -> "Change only the subtle stylized facial surface finish. Preserve the exact hairstyle, "
+                    + "hairline, face silhouette, eyes, eyebrows, nose, mouth, ears, and apparent identity.";
+            case WELL_BEING -> "Change only subtle complexion brightness and saturation. Preserve the exact "
+                    + "hairstyle, hairline, face silhouette, eyes, eyebrows, nose, mouth, ears, and identity.";
+            case HEALTH_FIT, DIET -> "Change only the outer cheek and jaw contour slightly. Preserve the exact "
+                    + "hairstyle, hairline, eyes, eyebrows, nose, mouth, ears, skin tone, and identity.";
+        };
     }
 
     private String preset(AvatarGrowthTrack track, int stage) {

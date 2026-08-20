@@ -24,7 +24,7 @@ class OpenAiAccessSmokeTests {
                 System.getenv().getOrDefault("OPENAI_IMAGE_MODEL", "gpt-image-2"),
                 Duration.ofSeconds(10),
                 Duration.ofSeconds(60),
-                Duration.ofSeconds(70)
+                Duration.ofSeconds(130)
         );
         ObjectMapper objectMapper = new ObjectMapper();
         RestOpenAiGateway gateway = new RestOpenAiGateway(properties, objectMapper);
@@ -48,7 +48,7 @@ class OpenAiAccessSmokeTests {
             source = input.readAllBytes();
         }
         byte[] template = processor.encodePng(processor.prepareTemplate(source));
-        byte[] mask = processor.encodePng(processor.createFaceMask());
+        byte[] mask = processor.encodePng(processor.createIdentityMask());
         JsonNode vision = gateway.structuredResponse(
                 "vision_smoke_result",
                 "smoke-v1",

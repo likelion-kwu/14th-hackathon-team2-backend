@@ -4,6 +4,7 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.AffineTransform;
+import java.awt.geom.Area;
 import java.awt.geom.Ellipse2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -23,6 +24,12 @@ public class AvatarImageProcessor {
     public static final int WORK_HEIGHT = 1280;
     public static final int FINAL_WIDTH = 250;
     public static final int FINAL_HEIGHT = 500;
+    private static final int MIN_FOREGROUND_ALPHA = 128;
+    private static final int MAX_BACKGROUND_ALPHA = 16;
+    private static final int MIN_FOREGROUND_PIXELS = FINAL_WIDTH * FINAL_HEIGHT / 20;
+    private static final int MIN_TRANSPARENT_PIXELS = FINAL_WIDTH * FINAL_HEIGHT / 5;
+    private static final int MIN_FOREGROUND_WIDTH = FINAL_WIDTH / 4;
+    private static final int MIN_FOREGROUND_HEIGHT = FINAL_HEIGHT / 2;
 
     public BufferedImage prepareTemplate(byte[] source) {
         BufferedImage decoded = decode(source);
@@ -30,13 +37,29 @@ public class AvatarImageProcessor {
         return removeConnectedLightBackground(scaled);
     }
 
-    public BufferedImage createFaceMask() {
+    public BufferedImage createIdentityMask() {
         BufferedImage mask = new BufferedImage(WORK_WIDTH, WORK_HEIGHT, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = mask.createGraphics();
         graphics.setColor(new Color(0, 0, 0, 255));
         graphics.fillRect(0, 0, WORK_WIDTH, WORK_HEIGHT);
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         graphics.setComposite(java.awt.AlphaComposite.Clear);
-        graphics.fillOval(205, 55, 230, 275);
+        Area identityArea = new Area(new Ellipse2D.Double(135, 40, 370, 470));
+        identityArea.add(new Area(new Ellipse2D.Double(115, 155, 220, 500)));
+        identityArea.add(new Area(new Ellipse2D.Double(305, 155, 220, 500)));
+        graphics.fill(identityArea);
+        graphics.dispose();
+        return mask;
+    }
+
+    public BufferedImage createFaceEvolutionMask() {
+        BufferedImage mask = new BufferedImage(WORK_WIDTH, WORK_HEIGHT, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = mask.createGraphics();
+        graphics.setColor(new Color(0, 0, 0, 255));
+        graphics.fillRect(0, 0, WORK_WIDTH, WORK_HEIGHT);
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        graphics.setComposite(java.awt.AlphaComposite.Clear);
+        graphics.fill(new Ellipse2D.Double(195, 125, 250, 365));
         graphics.dispose();
         return mask;
     }
@@ -54,7 +77,21 @@ public class AvatarImageProcessor {
     }
 
     public byte[] composeMaskedEdit(byte[] generated, BufferedImage base, BufferedImage mask) {
-        BufferedImage edited = resize(decode(generated), WORK_WIDTH, WORK_HEIGHT);
+        return composeMaskedEdit(generated, base, mask, 1.0d);
+    }
+
+    public byte[] composeMaskedEdit(
+            byte[] generated,
+            BufferedImage base,
+            BufferedImage mask,
+            double editStrength
+    ) {
+        if (editStrength < 0.0d || editStrength > 1.0d) {
+            throw new IllegalArgumentException("Edit strength must be between zero and one");
+        }
+        BufferedImage edited = removeConnectedLightBackground(
+                resize(decode(generated), WORK_WIDTH, WORK_HEIGHT)
+        );
         BufferedImage normalizedBase = resize(base, WORK_WIDTH, WORK_HEIGHT);
         BufferedImage normalizedMask = resize(mask, WORK_WIDTH, WORK_HEIGHT);
         BufferedImage composed = new BufferedImage(WORK_WIDTH, WORK_HEIGHT, BufferedImage.TYPE_INT_ARGB);
@@ -62,12 +99,18 @@ public class AvatarImageProcessor {
             for (int x = 0; x < WORK_WIDTH; x++) {
                 int baseArgb = normalizedBase.getRGB(x, y);
                 int editedArgb = edited.getRGB(x, y);
-                int keepWeight = (normalizedMask.getRGB(x, y) >>> 24) & 0xff;
-                int editWeight = 255 - keepWeight;
+                int maskEditWeight = 255 - ((normalizedMask.getRGB(x, y) >>> 24) & 0xff);
+                int editWeight = (int) Math.round(maskEditWeight * editStrength);
+                int keepWeight = 255 - editWeight;
                 int red = blend((baseArgb >>> 16) & 0xff, (editedArgb >>> 16) & 0xff, keepWeight, editWeight);
                 int green = blend((baseArgb >>> 8) & 0xff, (editedArgb >>> 8) & 0xff, keepWeight, editWeight);
                 int blue = blend(baseArgb & 0xff, editedArgb & 0xff, keepWeight, editWeight);
-                int alpha = (baseArgb >>> 24) & 0xff;
+                int alpha = blend(
+                        (baseArgb >>> 24) & 0xff,
+                        (editedArgb >>> 24) & 0xff,
+                        keepWeight,
+                        editWeight
+                );
                 composed.setRGB(x, y, (alpha << 24) | (red << 16) | (green << 8) | blue);
             }
         }
@@ -140,20 +183,49 @@ public class AvatarImageProcessor {
         if (!hasPngSignature(bytes)) {
             return false;
         }
-        BufferedImage image = decode(bytes);
+        BufferedImage image;
+        try {
+            image = decode(bytes);
+        } catch (RuntimeException exception) {
+            return false;
+        }
+
         if (image.getWidth() != FINAL_WIDTH
                 || image.getHeight() != FINAL_HEIGHT
                 || !image.getColorModel().hasAlpha()) {
             return false;
         }
+
+        int foregroundPixels = 0;
+        int transparentPixels = 0;
+        int minX = FINAL_WIDTH;
+        int minY = FINAL_HEIGHT;
+        int maxX = -1;
+        int maxY = -1;
         for (int y = 0; y < image.getHeight(); y++) {
             for (int x = 0; x < image.getWidth(); x++) {
-                if (((image.getRGB(x, y) >>> 24) & 0xff) < 255) {
-                    return true;
+                int alpha = (image.getRGB(x, y) >>> 24) & 0xff;
+                if (alpha <= MAX_BACKGROUND_ALPHA) {
+                    transparentPixels++;
+                }
+                if (alpha >= MIN_FOREGROUND_ALPHA) {
+                    foregroundPixels++;
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
                 }
             }
         }
-        return false;
+
+        if (foregroundPixels < MIN_FOREGROUND_PIXELS
+                || transparentPixels < MIN_TRANSPARENT_PIXELS
+                || maxX < minX
+                || maxY < minY) {
+            return false;
+        }
+        return maxX - minX + 1 >= MIN_FOREGROUND_WIDTH
+                && maxY - minY + 1 >= MIN_FOREGROUND_HEIGHT;
     }
 
     private BufferedImage resize(BufferedImage source, int width, int height) {
@@ -169,15 +241,16 @@ public class AvatarImageProcessor {
     private BufferedImage removeConnectedLightBackground(BufferedImage source) {
         int width = source.getWidth();
         int height = source.getHeight();
+        boolean skyBlueBackground = hasSkyBlueBorder(source);
         boolean[][] background = new boolean[height][width];
         Queue<int[]> queue = new ArrayDeque<>();
         for (int x = 0; x < width; x++) {
-            enqueueBackground(source, background, queue, x, 0);
-            enqueueBackground(source, background, queue, x, height - 1);
+            enqueueBackground(source, background, queue, x, 0, skyBlueBackground);
+            enqueueBackground(source, background, queue, x, height - 1, skyBlueBackground);
         }
         for (int y = 0; y < height; y++) {
-            enqueueBackground(source, background, queue, 0, y);
-            enqueueBackground(source, background, queue, width - 1, y);
+            enqueueBackground(source, background, queue, 0, y, skyBlueBackground);
+            enqueueBackground(source, background, queue, width - 1, y, skyBlueBackground);
         }
         int[][] directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
         while (!queue.isEmpty()) {
@@ -186,7 +259,7 @@ public class AvatarImageProcessor {
                 int x = point[0] + direction[0];
                 int y = point[1] + direction[1];
                 if (x >= 0 && x < width && y >= 0 && y < height) {
-                    enqueueBackground(source, background, queue, x, y);
+                    enqueueBackground(source, background, queue, x, y, skyBlueBackground);
                 }
             }
         }
@@ -197,7 +270,9 @@ public class AvatarImageProcessor {
                 int argb = source.getRGB(x, y);
                 int rgb = argb & 0x00ffffff;
                 int alpha = (argb >>> 24) & 0xff;
-                rgba.setRGB(x, y, background[y][x] ? rgb : (alpha << 24) | rgb);
+                // Transparent matte pixels must not retain the blue/white RGB value. Keeping hidden matte
+                // color causes a fringe when a non-premultiplied ARGB image is resized or composited later.
+                rgba.setRGB(x, y, background[y][x] ? 0 : (alpha << 24) | rgb);
             }
         }
         return rgba;
@@ -208,13 +283,51 @@ public class AvatarImageProcessor {
             boolean[][] background,
             Queue<int[]> queue,
             int x,
-            int y
+            int y,
+            boolean skyBlueBackground
     ) {
-        if (background[y][x] || !isLightNeutral(source.getRGB(x, y))) {
+        if (background[y][x] || !isBackgroundPixel(source.getRGB(x, y), skyBlueBackground)) {
             return;
         }
         background[y][x] = true;
         queue.add(new int[]{x, y});
+    }
+
+    private boolean hasSkyBlueBorder(BufferedImage source) {
+        int skyBlueSamples = 0;
+        int samples = 0;
+        int horizontalStep = Math.max(1, source.getWidth() / 32);
+        int verticalStep = Math.max(1, source.getHeight() / 32);
+        for (int x = 0; x < source.getWidth(); x += horizontalStep) {
+            skyBlueSamples += isSkyBlue(source.getRGB(x, 0)) ? 1 : 0;
+            skyBlueSamples += isSkyBlue(source.getRGB(x, source.getHeight() - 1)) ? 1 : 0;
+            samples += 2;
+        }
+        for (int y = 0; y < source.getHeight(); y += verticalStep) {
+            skyBlueSamples += isSkyBlue(source.getRGB(0, y)) ? 1 : 0;
+            skyBlueSamples += isSkyBlue(source.getRGB(source.getWidth() - 1, y)) ? 1 : 0;
+            samples += 2;
+        }
+        return skyBlueSamples * 2 >= samples;
+    }
+
+    private boolean isBackgroundPixel(int argb, boolean skyBlueBackground) {
+        return skyBlueBackground ? isSkyBlue(argb) : isLightNeutral(argb);
+    }
+
+    private boolean isSkyBlue(int argb) {
+        int alpha = (argb >>> 24) & 0xff;
+        if (alpha == 0) {
+            return true;
+        }
+        int red = (argb >>> 16) & 0xff;
+        int green = (argb >>> 8) & 0xff;
+        int blue = argb & 0xff;
+        return red >= 150
+                && green >= 175
+                && blue >= 205
+                && blue - red >= 18
+                && blue - green >= 4;
     }
 
     private boolean isLightNeutral(int argb) {
