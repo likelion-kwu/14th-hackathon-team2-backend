@@ -15,6 +15,7 @@ permissions:
 jobs:
   build:
     name: Test and build image
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -174,6 +175,90 @@ jobs:
           ssh "${ssh_options[@]}" "${SSH_USER}@${SSH_HOST}" \
             "bash -s -- '${remote_artifact}' '${remote_compose}' '${DEPLOY_PATH}' '${HEALTH_URL}' '${release_id}' '${artifact_sha256}'" \
             < scripts/deploy-gabia.sh
+
+      - name: Remove temporary SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f -- "${RUNNER_TEMP}/gabia-ssh/private_key" "${RUNNER_TEMP}/gabia-ssh/known_hosts"
+          rmdir -- "${RUNNER_TEMP}/gabia-ssh" 2>/dev/null || true
+
+  seed_demo:
+    name: Seed production demo guest
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ops/demo-seed-20260821'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: production
+    concurrency:
+      group: gabia-production-demo-seed
+      cancel-in-progress: false
+
+    env:
+      SSH_HOST: ${{ vars.GABIA_HOST }}
+      SSH_PORT: ${{ vars.GABIA_SSH_PORT || '22' }}
+      SSH_USER: ${{ vars.GABIA_SSH_USER }}
+      DEPLOY_PATH: ${{ vars.GABIA_DEPLOY_PATH }}
+      SSH_PRIVATE_KEY: ${{ secrets.GABIA_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.GABIA_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: Check out seed script
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate seed configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          missing=0
+          for name in SSH_HOST SSH_USER DEPLOY_PATH SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::${name} is not configured"
+              missing=1
+            fi
+          done
+          (( missing == 0 )) || exit 1
+
+          [[ "${SSH_HOST}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::GABIA_HOST is invalid"; exit 1; }
+          if [[ ! "${SSH_PORT}" =~ ^[0-9]{1,5}$ ]] || (( SSH_PORT < 1 || SSH_PORT > 65535 )); then
+            echo "::error::GABIA_SSH_PORT must be between 1 and 65535"
+            exit 1
+          fi
+          [[ "${SSH_USER}" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "::error::GABIA_SSH_USER is invalid"; exit 1; }
+          if [[ ! "${DEPLOY_PATH}" =~ ^/(opt|srv|home)/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] \
+            || [[ "/${DEPLOY_PATH}/" == *"/../"* ]] \
+            || [[ "/${DEPLOY_PATH}/" == *"/./"* ]]; then
+            echo "::error::GABIA_DEPLOY_PATH is invalid"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -m 700 -d "${RUNNER_TEMP}/gabia-ssh"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > "${RUNNER_TEMP}/gabia-ssh/private_key"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" > "${RUNNER_TEMP}/gabia-ssh/known_hosts"
+          chmod 600 "${RUNNER_TEMP}/gabia-ssh/private_key" "${RUNNER_TEMP}/gabia-ssh/known_hosts"
+          ssh-keygen -y -f "${RUNNER_TEMP}/gabia-ssh/private_key" >/dev/null
+
+      - name: Seed demo guest transaction
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh_options=(
+            -i "${RUNNER_TEMP}/gabia-ssh/private_key"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${RUNNER_TEMP}/gabia-ssh/known_hosts"
+            -p "${SSH_PORT}"
+          )
+          remote_env="${DEPLOY_PATH}/.env"
+          remote_compose="${DEPLOY_PATH}/compose.yaml"
+
+          ssh "${ssh_options[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "test -f '${remote_env}' && test -f '${remote_compose}' && docker compose --project-directory '${DEPLOY_PATH}' --env-file '${remote_env}' --file '${remote_compose}' exec -T postgres sh -c 'psql --username \"\$POSTGRES_USER\" --dbname \"\$POSTGRES_DB\" --set=ON_ERROR_STOP=1'" \
+            < scripts/seed-demo-user.sql
 
       - name: Remove temporary SSH material
         if: always()
