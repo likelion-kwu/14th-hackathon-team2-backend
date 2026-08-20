@@ -1490,11 +1490,11 @@ scene
 MVP seed:
 
 ```text
-EP.1 required_streak=10 avatar_stage=2
-EP.2 required_streak=20 avatar_stage=3
-EP.3 required_streak=30 avatar_stage=3
-EP.4 required_streak=40 avatar_stage=3
-EP.5 required_streak=50 avatar_stage=3
+EP.1 required_streak=7 avatar_stage=2
+EP.2 required_streak=14 avatar_stage=3
+EP.3 required_streak=21 avatar_stage=3
+EP.4 required_streak=28 avatar_stage=3
+EP.5 required_streak=35 avatar_stage=3
 ```
 
 MVP의 Story Episode는 총 5개다.
@@ -2140,11 +2140,11 @@ Item milestone:
 StoryEpisode:
 
 ```text
-EP.1 / required_streak 10 / avatar_stage 2
-EP.2 / required_streak 20 / avatar_stage 3
-EP.3 / required_streak 30 / avatar_stage 3
-EP.4 / required_streak 40 / avatar_stage 3
-EP.5 / required_streak 50 / avatar_stage 3
+EP.1 / required_streak 7 / avatar_stage 2
+EP.2 / required_streak 14 / avatar_stage 3
+EP.3 / required_streak 21 / avatar_stage 3
+EP.4 / required_streak 28 / avatar_stage 3
+EP.5 / required_streak 35 / avatar_stage 3
 ```
 
 PhotoMissionTemplate:
@@ -2604,11 +2604,11 @@ Item 해금 후 Point 차감 없음
 ## Story
 
 ```text
-9→10 EP.1
-19→20 EP.2
-29→30 EP.3
-39→40 EP.4
-49→50 EP.5
+6→7 EP.1
+13→14 EP.2
+20→21 EP.3
+27→28 EP.4
+34→35 EP.5
 EP.3~EP.5 해금 후 Avatar Stage 3 유지
 루틴 없는 날 사이에 존재
 실패 예정일 존재
@@ -2691,7 +2691,7 @@ PRESET→KAKAO 생성 실패 시 기존 Profile 유지
 
 6. Item 기준은 누적 획득 Point 100P 단위
 
-7. Story 기준은 `TO_DO`를 제외한 연속 '하루 전체 성공일'이며 MVP 해금 기준은 10/20/30/40/50일
+7. Story 기준은 `TO_DO`를 제외한 연속 '하루 전체 성공일'이며 MVP 해금 기준은 7/14/21/28/35일
 
 8. streak 숫자는 DB에 cached 저장하지 않음
 

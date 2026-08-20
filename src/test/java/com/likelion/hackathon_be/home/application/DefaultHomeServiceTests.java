@@ -180,8 +180,8 @@ class DefaultHomeServiceTests {
         when(pointClaimRepository.countByUserIdAndServiceDate(USER_ID, SERVICE_DATE)).thenReturn(2L);
         when(streakAnalysisService.analyze(USER_ID)).thenReturn(new StreakAnalysis(9, 4, 9));
         when(userStoryUnlockRepository.findMaximumAvatarStage(USER_ID)).thenReturn(Optional.of(3));
-        StoryEpisode ep1 = storyEpisode(1L, 1, 10, 2);
-        StoryEpisode ep2 = storyEpisode(2L, 2, 20, 3);
+        StoryEpisode ep1 = storyEpisode(1L, 1, 7, 2);
+        StoryEpisode ep2 = storyEpisode(2L, 2, 14, 3);
         when(storyEpisodeRepository.findByActiveTrueOrderByEpisodeNumberAsc()).thenReturn(List.of(ep1, ep2));
         when(userStoryUnlockRepository.findEpisodeIdsByUserIdAndEpisodeIdIn(USER_ID, java.util.Set.of(1L, 2L)))
                 .thenReturn(List.of(1L));
@@ -212,7 +212,7 @@ class DefaultHomeServiceTests {
         assertThat(response.success().maxAchievedStreakDays()).isEqualTo(9);
         assertThat(response.unlockProgress().nextItemMilestonePoints()).isEqualTo(300);
         assertThat(response.unlockProgress().nextStoryEpisodeNumber()).isEqualTo(2);
-        assertThat(response.unlockProgress().nextStoryRequiredStreakDays()).isEqualTo(20);
+        assertThat(response.unlockProgress().nextStoryRequiredStreakDays()).isEqualTo(14);
         assertThat(response.routines()).hasSize(4);
         assertThat(response.routines()).extracting("dailyRoutineId").containsExactly(1L, 2L, 3L, 4L);
         assertThat(response.routines().get(0).status()).isEqualTo("COMPLETED");
@@ -268,7 +268,7 @@ class DefaultHomeServiceTests {
     @Test
     void upcomingRoutineStatusAndNoStoryRemaining() throws Exception {
         DailyRoutine upcoming = dailyRoutine(5L, 105L, RoutineCategory.SKIN, 15, 0, 16, 0);
-        StoryEpisode ep5 = storyEpisode(5L, 5, 50, 3);
+        StoryEpisode ep5 = storyEpisode(5L, 5, 35, 3);
         when(dailyRoutineRepository.findByUserIdAndServiceDateOrderByStartTimeSnapshotAscIdAsc(USER_ID, SERVICE_DATE))
                 .thenReturn(List.of(upcoming));
         when(verificationRepository.findByDailyRoutineIdIn(List.of(5L))).thenReturn(List.of());

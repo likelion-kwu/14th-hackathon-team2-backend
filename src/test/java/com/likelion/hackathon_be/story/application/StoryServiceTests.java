@@ -52,10 +52,10 @@ class StoryServiceTests {
 
     @Test
     void combinesPartAProgressWithPermanentUnlockRecordsInEpisodeOrder() {
-        StoryEpisode first = episode(1L, 1, 10, 2);
-        StoryEpisode second = episode(2L, 2, 20, 3);
+        StoryEpisode first = episode(1L, 1, 7, 2);
+        StoryEpisode second = episode(2L, 2, 14, 3);
         UserStoryUnlock firstUnlock = UserStoryUnlock.create(USER_ID, 1L, UNLOCKED_AT);
-        when(storyProgressionService.currentProgress(USER_ID)).thenReturn(progress(4, 10, 2));
+        when(storyProgressionService.currentProgress(USER_ID)).thenReturn(progress(4, 7, 2));
         when(storyEpisodeRepository.findByActiveTrueOrderByEpisodeNumberAsc())
                 .thenReturn(List.of(first, second));
         when(userStoryUnlockRepository.findByUserId(USER_ID)).thenReturn(List.of(firstUnlock));
@@ -63,16 +63,16 @@ class StoryServiceTests {
         StoryProgressResponse response = service.getStories();
 
         assertThat(response.currentStreakDays()).isEqualTo(4);
-        assertThat(response.maxAchievedStreakDays()).isEqualTo(10);
+        assertThat(response.maxAchievedStreakDays()).isEqualTo(7);
         assertThat(response.avatarStage()).isEqualTo(2);
         assertThat(response.episodes()).containsExactly(
                 new StoryEpisodeResponse(
                         1,
-                        10,
+                        7,
                         true,
                         UNLOCKED_AT.atZone(ZoneId.of("Asia/Seoul")).toOffsetDateTime()
                 ),
-                new StoryEpisodeResponse(2, 20, false, null)
+                new StoryEpisodeResponse(2, 14, false, null)
         );
         verify(storyProgressionService).currentProgress(USER_ID);
         verify(userStoryUnlockRepository, never()).save(any());
@@ -80,7 +80,7 @@ class StoryServiceTests {
 
     @Test
     void noUnlockUsesStageOneFromPartAProgress() {
-        StoryEpisode first = episode(1L, 1, 10, 2);
+        StoryEpisode first = episode(1L, 1, 7, 2);
         when(storyProgressionService.currentProgress(USER_ID)).thenReturn(progress(0, 0, 1));
         when(storyEpisodeRepository.findByActiveTrueOrderByEpisodeNumberAsc()).thenReturn(List.of(first));
         when(userStoryUnlockRepository.findByUserId(USER_ID)).thenReturn(List.of());
