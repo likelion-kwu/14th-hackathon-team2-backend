@@ -169,8 +169,13 @@ BEGIN
      WHERE active = TRUE;
 
     IF v_count < 1 THEN
-        RAISE EXCEPTION
-            'ABORT: no active item exists; 100P could not unlock an item';
+        INSERT INTO items (
+            name, item_type, asset_key, active, created_at
+        )
+        VALUES (
+            '데모 별 모자', 'HEAD', 'test-item', TRUE, v_now_utc
+        );
+        RAISE NOTICE 'No active Item existed; seeded test-item master data';
     END IF;
 
     INSERT INTO speech_style_profiles (
