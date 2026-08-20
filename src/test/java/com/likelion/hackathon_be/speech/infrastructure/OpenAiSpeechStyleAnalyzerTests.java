@@ -1,122 +1,220 @@
 package com.likelion.hackathon_be.speech.infrastructure;
 
+import java.lang.reflect.Field;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 
 import com.likelion.hackathon_be.ai.openai.OpenAiGateway;
 import com.likelion.hackathon_be.ai.openai.OpenAiImageInput;
-import com.likelion.hackathon_be.common.error.BusinessException;
-import com.likelion.hackathon_be.common.error.ErrorCode;
+import com.likelion.hackathon_be.speech.application.SpeechExampleCandidate;
+import com.likelion.hackathon_be.speech.domain.SpeechExampleCategory;
+import com.likelion.hackathon_be.speech.domain.SpeechExampleSourceType;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OpenAiSpeechStyleAnalyzerTests {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
-    void storesOnlyExtendedJsonAndCalculatesObservedProfanityFrequency() throws Exception {
+    void createsExamplesFromAnalysisCandidatesUsingOriginalUserContent() throws Exception {
         QueueGateway gateway = new QueueGateway();
-        gateway.responses.add(analysisResponse());
-        gateway.responses.add(objectMapper.readTree("""
-                {"examples":[{"category":"GENERAL","sourceType":"USER_MESSAGE","content":"근데 오늘은 해볼 만해"}]}
-                """));
+        gateway.responses.add(analysisResponse(List.of(
+                candidate("m-001", "GENERAL"),
+                candidate("m-002", "QUESTION")
+        )));
         OpenAiSpeechStyleAnalyzer analyzer = new OpenAiSpeechStyleAnalyzer(gateway, objectMapper);
 
-        AnalyzedSpeechProfile analyzed = analyzer.analyze(data(Map.of("시발", 6)));
+        AnalyzedSpeechProfile analyzed = analyzer.analyze(data(List.of(
+                message("m-001", "first original message"),
+                message("m-002", "second original?")
+        )));
+
+        assertThat(analyzed.profile().examples())
+                .extracting(SpeechExampleCandidate::content)
+                .containsExactly("first original message", "second original?");
+        assertThat(analyzed.profile().examples())
+                .extracting(SpeechExampleCandidate::category)
+                .containsExactly(SpeechExampleCategory.GENERAL, SpeechExampleCategory.QUESTION);
+        assertThat(analyzed.profile().examples())
+                .extracting(SpeechExampleCandidate::sourceType)
+                .containsOnly(SpeechExampleSourceType.USER_MESSAGE);
+        assertThat(gateway.schemaNames).containsExactly("speech_style_analysis");
+    }
+
+    @Test
+    void skipsInvalidCandidateAndKeepsValidOnes() throws Exception {
+        QueueGateway gateway = new QueueGateway();
+        gateway.responses.add(analysisResponse(List.of(
+                candidate("m-001", "GENERAL"),
+                candidate("m-404", "QUESTION"),
+                candidate("m-002", "NOT_A_CATEGORY"),
+                candidate("m-003", "AGREEMENT")
+        )));
+
+        AnalyzedSpeechProfile analyzed = new OpenAiSpeechStyleAnalyzer(gateway, objectMapper)
+                .analyze(data(List.of(
+                        message("m-001", "valid one"),
+                        message("m-002", "invalid category source"),
+                        message("m-003", "valid three")
+                )));
+
+        assertThat(analyzed.profile().examples())
+                .extracting(SpeechExampleCandidate::content)
+                .containsExactly("valid one", "valid three");
+        assertThat(gateway.schemaNames).containsExactly("speech_style_analysis");
+    }
+
+    @Test
+    void limitsExamplesToTwenty() throws Exception {
+        List<String> candidates = new ArrayList<>();
+        List<PreprocessedSpeechMessage> messages = new ArrayList<>();
+        for (int index = 1; index <= 25; index++) {
+            String id = "m-%03d".formatted(index);
+            candidates.add(candidate(id, "GENERAL"));
+            messages.add(message(id, "message " + index));
+        }
+        QueueGateway gateway = new QueueGateway();
+        gateway.responses.add(analysisResponse(candidates));
+
+        AnalyzedSpeechProfile analyzed = new OpenAiSpeechStyleAnalyzer(gateway, objectMapper)
+                .analyze(data(messages));
+
+        assertThat(analyzed.profile().examples()).hasSize(20);
+        assertThat(analyzed.profile().examples().get(19).content()).isEqualTo("message 20");
+        assertThat(gateway.schemaNames).containsExactly("speech_style_analysis");
+    }
+
+    @Test
+    void removesDuplicatesByNormalizedContent() throws Exception {
+        QueueGateway gateway = new QueueGateway();
+        gateway.responses.add(analysisResponse(List.of(
+                candidate("m-001", "GENERAL"),
+                candidate("m-002", "QUESTION"),
+                candidate("m-003", "AGREEMENT")
+        )));
+
+        AnalyzedSpeechProfile analyzed = new OpenAiSpeechStyleAnalyzer(gateway, objectMapper)
+                .analyze(data(List.of(
+                        message("m-001", "hello there"),
+                        message("m-002", "hello  there"),
+                        message("m-003", "different")
+                )));
+
+        assertThat(analyzed.profile().examples())
+                .extracting(SpeechExampleCandidate::content)
+                .containsExactly("hello there", "different");
+        assertThat(gateway.schemaNames).containsExactly("speech_style_analysis");
+    }
+
+    @Test
+    void excludesPiiForbiddenBlankAndOverFiftyCodePointCandidates() throws Exception {
+        QueueGateway gateway = new QueueGateway();
+        gateway.responses.add(analysisResponse(List.of(
+                candidate("m-001", "GENERAL"),
+                candidate("m-002", "QUESTION"),
+                candidate("m-003", "AGREEMENT"),
+                candidate("m-004", "REACTION"),
+                candidate("m-005", "ENCOURAGEMENT"),
+                candidate("m-006", "DISAGREEMENT")
+        )));
+
+        AnalyzedSpeechProfile analyzed = new OpenAiSpeechStyleAnalyzer(gateway, objectMapper)
+                .analyze(data(List.of(
+                        message("m-001", "safe example"),
+                        message("m-002", "010-1234-5678"),
+                        message("m-003", forbiddenTerm()),
+                        message("m-004", " "),
+                        message("m-005", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxy"),
+                        message("m-006", "another safe")
+                )));
+
+        assertThat(analyzed.profile().examples())
+                .extracting(SpeechExampleCandidate::content)
+                .containsExactly("safe example", "another safe");
+        assertThat(gateway.schemaNames).containsExactly("speech_style_analysis");
+    }
+
+    @Test
+    void storesOnlyExtendedJsonAndCalculatesObservedProfanityFrequency() throws Exception {
+        QueueGateway gateway = new QueueGateway();
+        gateway.responses.add(analysisResponse(List.of(candidate("m-001", "GENERAL"))));
+        OpenAiSpeechStyleAnalyzer analyzer = new OpenAiSpeechStyleAnalyzer(gateway, objectMapper);
+
+        AnalyzedSpeechProfile analyzed = analyzer.analyze(data(
+                List.of(message("m-001", "first original message")),
+                Map.of(safeProfanityTerm(), 6)
+        ));
         JsonNode style = objectMapper.readTree(analyzed.profile().styleJson());
 
         assertThat(style.has("speechLevel")).isFalse();
-        assertThat(style.path("openingPatterns").get(0).asText()).isEqualTo("근데");
+        assertThat(style.path("openingPatterns").get(0).asText()).isEqualTo("hello");
         assertThat(style.path("profanity").path("observedFrequency").asText()).isEqualTo("HIGH");
         assertThat(style.path("profanity").path("enabledByUser").booleanValue()).isFalse();
-        assertThat(analyzed.allowedProfanity()).containsExactly("시발");
-        assertThat(analyzed.profile().examples()).hasSize(1);
+        assertThat(analyzed.allowedProfanity()).containsExactly(safeProfanityTerm());
+        assertThat(gateway.schemaNames).containsExactly("speech_style_analysis");
     }
 
-    @Test
-    void rejectsHallucinatedContentClaimedAsUserMessageAfterOneSchemaRetry() throws Exception {
-        QueueGateway gateway = new QueueGateway();
-        gateway.responses.add(analysisResponse());
-        JsonNode forged = objectMapper.readTree("""
-                {"examples":[{"category":"GENERAL","sourceType":"USER_MESSAGE","content":"사용자가 말하지 않은 문장"}]}
-                """);
-        gateway.responses.add(forged);
-        gateway.responses.add(forged);
-        OpenAiSpeechStyleAnalyzer analyzer = new OpenAiSpeechStyleAnalyzer(gateway, objectMapper);
-
-        assertThatThrownBy(() -> analyzer.analyze(data(Map.of())))
-                .isInstanceOfSatisfying(BusinessException.class, exception ->
-                        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.AI_RESPONSE_INVALID));
-        assertThat(gateway.calls).isEqualTo(3);
+    @SuppressWarnings("unchecked")
+    private String forbiddenTerm() throws Exception {
+        Field field = OpenAiSpeechStyleAnalyzer.class.getDeclaredField("FORBIDDEN");
+        field.setAccessible(true);
+        return ((Set<String>) field.get(null)).iterator().next();
     }
 
-    @Test
-    void rejectsAiGeneratedReplacementWhenThatCategoryHasARealCandidate() throws Exception {
-        QueueGateway gateway = new QueueGateway();
-        gateway.responses.add(analysisResponse());
-        JsonNode unnecessaryGenerated = objectMapper.readTree("""
-                {"examples":[{"category":"GENERAL","sourceType":"AI_GENERATED","content":"오늘은 가볍게 해보자"}]}
-                """);
-        gateway.responses.add(unnecessaryGenerated);
-        gateway.responses.add(unnecessaryGenerated);
-
-        assertThatThrownBy(() -> new OpenAiSpeechStyleAnalyzer(gateway, objectMapper).analyze(data(Map.of())))
-                .isInstanceOfSatisfying(BusinessException.class, exception ->
-                        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.AI_RESPONSE_INVALID));
-        assertThat(gateway.calls).isEqualTo(3);
+    @SuppressWarnings("unchecked")
+    private String safeProfanityTerm() throws Exception {
+        Field field = OpenAiSpeechStyleAnalyzer.class.getDeclaredField("SAFE_SELF_DIRECTED_PROFANITY");
+        field.setAccessible(true);
+        return ((Set<String>) field.get(null)).iterator().next();
     }
 
-    @Test
-    void allowsAiGeneratedExampleOnlyForMissingCategory() throws Exception {
-        QueueGateway gateway = new QueueGateway();
-        gateway.responses.add(analysisResponse());
-        gateway.responses.add(objectMapper.readTree("""
-                {"examples":[
-                  {"category":"GENERAL","sourceType":"USER_MESSAGE","content":"근데 오늘은 해볼 만해"},
-                  {"category":"QUESTION","sourceType":"AI_GENERATED","content":"지금 하나 시작할까?"}
-                ]}
-                """));
-
-        AnalyzedSpeechProfile analyzed = new OpenAiSpeechStyleAnalyzer(gateway, objectMapper).analyze(data(Map.of()));
-
-        assertThat(analyzed.profile().examples()).hasSize(2);
-        assertThat(gateway.calls).isEqualTo(2);
+    private PreprocessedSpeechData data(List<PreprocessedSpeechMessage> messages) {
+        return data(messages, Map.of());
     }
 
-    private PreprocessedSpeechData data(Map<String, Integer> profanity) {
+    private PreprocessedSpeechData data(List<PreprocessedSpeechMessage> messages, Map<String, Integer> profanity) {
         return new PreprocessedSpeechData(
-                List.of(new PreprocessedSpeechMessage("m-001", "[PERSON] 오늘 할 거야?", "근데 오늘은 해볼 만해")),
+                messages,
                 50,
-                Map.of("근데", 3),
+                Map.of("hello", 3),
                 profanity
         );
     }
 
-    private JsonNode analysisResponse() {
+    private PreprocessedSpeechMessage message(String id, String content) {
+        return new PreprocessedSpeechMessage(id, "[PERSON] context", content);
+    }
+
+    private String candidate(String id, String category) {
+        return "{\"messageId\":\"%s\",\"category\":\"%s\"}".formatted(id, category);
+    }
+
+    private JsonNode analysisResponse(List<String> candidates) {
         return objectMapper.readTree("""
                 {
                   "profile":{
                     "speechLevel":"BANMAL","sentenceLength":"SHORT","directness":"MEDIUM",
                     "warmth":"MEDIUM","playfulness":"LOW","emotionalIntensity":"MEDIUM",
-                    "openingPatterns":["근데"],"endingPatterns":["해볼 만해"],
-                    "reactionPatterns":["좋아"],"avoidPatterns":["장황한 설명"],
+                    "openingPatterns":["hello"],"endingPatterns":["bye"],
+                    "reactionPatterns":["good"],"avoidPatterns":["too much"],
                     "punctuationStyle":{"period":"LOW","questionMark":"MEDIUM",
                       "exclamationMark":"LOW","repetition":"LOW"}
                   },
-                  "candidates":[{"messageId":"m-001","category":"GENERAL"}]
+                  "candidates":[%s]
                 }
-                """);
+                """.formatted(String.join(",", candidates)));
     }
 
     private static final class QueueGateway implements OpenAiGateway {
         private final Queue<JsonNode> responses = new ArrayDeque<>();
-        private int calls;
+        private final List<String> schemaNames = new ArrayList<>();
 
         @Override
         public boolean isAvailable() {
@@ -133,7 +231,7 @@ class OpenAiSpeechStyleAnalyzerTests {
                 JsonNode schema,
                 int maxOutputTokens
         ) {
-            calls++;
+            schemaNames.add(schemaName);
             return responses.remove();
         }
 
