@@ -269,7 +269,7 @@ public class DefaultSpeechAnalysisService implements SpeechAnalysisService {
             }
             User user = userRepository.findById(userId)
                     .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
-            List<DialogueCandidate> dialogues = dialogueGenerator.generateStrict(
+            List<DialogueCandidate> dialogues = dialogueGenerator.generateWithSafeFallback(
                     analyzed.profile(),
                     user.getNickname(),
                     Set.of()

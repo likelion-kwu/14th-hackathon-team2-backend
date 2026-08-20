@@ -40,13 +40,11 @@ public class OpenAiSpeechStyleAnalyzer {
     private final OpenAiGateway gateway;
     private final ObjectMapper objectMapper;
     private final JsonNode analysisSchema;
-    private final JsonNode exampleSchema;
 
     public OpenAiSpeechStyleAnalyzer(OpenAiGateway gateway, ObjectMapper objectMapper) {
         this.gateway = gateway;
         this.objectMapper = objectMapper;
         this.analysisSchema = objectMapper.readTree(analysisSchemaText());
-        this.exampleSchema = objectMapper.readTree(exampleSchemaText());
     }
 
     public AnalyzedSpeechProfile analyze(PreprocessedSpeechData data) {
@@ -61,14 +59,7 @@ public class OpenAiSpeechStyleAnalyzer {
                 3000,
                 response -> parseAnalysis(response, data)
         );
-        List<SpeechExampleCandidate> examples = requestValidated(
-                "speech_style_examples",
-                exampleInstructions(),
-                secondInput(parsed),
-                exampleSchema,
-                1800,
-                response -> parseExamples(response, parsed.candidates)
-        );
+        List<SpeechExampleCandidate> examples = examplesFromCandidates(parsed.candidates);
         SpeechProfileCandidate candidate = new SpeechProfileCandidate(
                 SpeechSourceType.KAKAO_CHAT,
                 null,
@@ -139,28 +130,26 @@ public class OpenAiSpeechStyleAnalyzer {
             Set<String> ids = new HashSet<>();
             Set<String> candidateContents = new HashSet<>();
             for (JsonNode candidate : root.path("candidates")) {
-                String id = requiredText(candidate, "messageId");
-                String category = requiredText(candidate, "category");
-                SpeechExampleCategory.valueOf(category);
-                if (byId.containsKey(id)
-                        && ids.add(id)
-                        && candidateContents.add(byId.get(id).userMessage().replaceAll("\\s+", ""))) {
-                    candidates.add(Map.of(
-                            "messageId", id,
-                            "category", category,
-                            "content", byId.get(id).userMessage()
-                    ));
+                try {
+                    String id = requiredText(candidate, "messageId");
+                    String category = requiredText(candidate, "category");
+                    SpeechExampleCategory.valueOf(category);
+                    PreprocessedSpeechMessage message = byId.get(id);
+                    if (message != null
+                            && ids.add(id)
+                            && candidateContents.add(normalize(message.userMessage()))) {
+                        candidates.add(Map.of(
+                                "messageId", id,
+                                "category", category,
+                                "content", message.userMessage()
+                        ));
+                    }
+                } catch (RuntimeException ignored) {
+                    // One malformed candidate must not fail the whole speech analysis.
                 }
                 if (candidates.size() == 60) {
                     break;
                 }
-            }
-            if (candidates.isEmpty()) {
-                data.messages().stream().limit(20).forEach(message -> candidates.add(Map.of(
-                        "messageId", message.id(),
-                        "category", SpeechExampleCategory.GENERAL.name(),
-                        "content", message.userMessage()
-                )));
             }
             String styleJson = sanitizedStyleJson(profile, data);
             return new ParsedAnalysis(settings, styleJson, List.copyOf(candidates));
@@ -169,56 +158,33 @@ public class OpenAiSpeechStyleAnalyzer {
         }
     }
 
-    private List<SpeechExampleCandidate> parseExamples(
-            JsonNode root,
+    private List<SpeechExampleCandidate> examplesFromCandidates(
             List<Map<String, String>> candidates
     ) {
         List<SpeechExampleCandidate> examples = new ArrayList<>();
         Set<String> unique = new HashSet<>();
-        Map<String, SpeechExampleCategory> userCandidates = new HashMap<>();
-        Set<SpeechExampleCategory> userCandidateCategories = new HashSet<>();
         for (Map<String, String> candidate : candidates) {
-            SpeechExampleCategory category = SpeechExampleCategory.valueOf(candidate.get("category"));
-            userCandidates.put(normalize(candidate.get("content")), category);
-            userCandidateCategories.add(category);
-        }
-        try {
-            for (JsonNode node : root.path("examples")) {
-                String content = requiredText(node, "content").trim();
+            try {
+                String content = candidate.get("content").trim();
                 String normalized = normalize(content);
-                SpeechExampleCategory category = SpeechExampleCategory.valueOf(requiredText(node, "category"));
-                SpeechExampleSourceType sourceType = SpeechExampleSourceType.valueOf(requiredText(node, "sourceType"));
+                SpeechExampleCategory category = SpeechExampleCategory.valueOf(candidate.get("category"));
                 if (content.isEmpty() || codePointLength(content) > 50 || containsForbidden(content)
                         || PII.matcher(content).find() || !unique.add(normalized)) {
-                    throw new IllegalArgumentException("Invalid representative example");
-                }
-                SpeechExampleCategory actualCategory = userCandidates.get(normalized);
-                if (sourceType == SpeechExampleSourceType.USER_MESSAGE
-                        && (actualCategory == null || actualCategory != category)) {
-                    throw new IllegalArgumentException("USER_MESSAGE example was not selected from candidates");
-                }
-                if (sourceType == SpeechExampleSourceType.AI_GENERATED
-                        && (actualCategory != null
-                        || userCandidateCategories.contains(category)
-                        || overCopiesUserCandidate(normalized, userCandidates.keySet()))) {
-                    throw new IllegalArgumentException("AI_GENERATED is allowed only for a missing category");
+                    continue;
                 }
                 examples.add(new SpeechExampleCandidate(
                         category,
-                        sourceType,
+                        SpeechExampleSourceType.USER_MESSAGE,
                         content
                 ));
                 if (examples.size() == 20) {
                     break;
                 }
+            } catch (RuntimeException ignored) {
+                // Skip only the invalid candidate and keep any other usable examples.
             }
-            if (examples.isEmpty()) {
-                throw new IllegalArgumentException("No representative examples");
-            }
-            return List.copyOf(examples);
-        } catch (RuntimeException exception) {
-            throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
         }
+        return List.copyOf(examples);
     }
 
     private String sanitizedStyleJson(JsonNode profile, PreprocessedSpeechData data) {
@@ -252,27 +218,8 @@ public class OpenAiSpeechStyleAnalyzer {
         ));
     }
 
-    private String secondInput(ParsedAnalysis analysis) {
-        return objectMapper.writeValueAsString(Map.of(
-                "styleJson", analysis.styleJson,
-                "settings", analysis.settings,
-                "candidates", analysis.candidates,
-                "maximumExamples", 20,
-                "maximumCharacters", 50
-        ));
-    }
-
     private boolean containsForbidden(String content) {
         return FORBIDDEN.stream().anyMatch(content::contains);
-    }
-
-    private boolean overCopiesUserCandidate(String generated, Set<String> userCandidates) {
-        for (String candidate : userCandidates) {
-            if (codePointLength(candidate) >= 8 && generated.contains(candidate)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private List<String> safePatternValues(JsonNode node) {
@@ -330,15 +277,6 @@ public class OpenAiSpeechStyleAnalyzer {
                 """;
     }
 
-    private String exampleInstructions() {
-        return """
-                Select at most 20 safe Korean representative style examples from the compressed candidates.
-                Prefer USER_MESSAGE; use AI_GENERATED only to fill a missing category. Each content is non-empty,
-                distinct, at most 50 characters, contains no personal data, threats, hate, self-harm encouragement,
-                or personal attack. Return only the strict schema.
-                """;
-    }
-
     private String analysisSchemaText() {
         return """
                 {
@@ -372,22 +310,6 @@ public class OpenAiSpeechStyleAnalyzer {
                       },"required":["messageId","category"]}}
                   },
                   "required":["profile","candidates"]
-                }
-                """;
-    }
-
-    private String exampleSchemaText() {
-        return """
-                {
-                  "type":"object","additionalProperties":false,
-                  "properties":{"examples":{"type":"array","minItems":1,"maxItems":20,"items":{
-                    "type":"object","additionalProperties":false,"properties":{
-                      "category":{"type":"string","enum":["QUESTION","AGREEMENT","DISAGREEMENT",
-                        "ENCOURAGEMENT","REACTION","GENERAL"]},
-                      "sourceType":{"type":"string","enum":["USER_MESSAGE","AI_GENERATED"]},
-                      "content":{"type":"string"}
-                    },"required":["category","sourceType","content"]
-                  }}},"required":["examples"]
                 }
                 """;
     }

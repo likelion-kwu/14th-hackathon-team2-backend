@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -71,6 +72,66 @@ class PhotoMissionPersistenceIntegrationTests {
 
     @Autowired
     TransactionTemplate transactionTemplate;
+
+    @Test
+    void flywaySeedsApprovedActivePhotoMissionTemplates() {
+        List<String> activeGestureCodes = templateRepository.findByActiveTrueOrderByIdAsc()
+                .stream()
+                .map(template -> template.getGestureCode())
+                .toList();
+
+        assertThat(activeGestureCodes)
+                .containsExactly("THUMBS_UP", "V_SIGN");
+
+        List<String> instructions = templateRepository.findByActiveTrueOrderByIdAsc()
+                .stream()
+                .map(template -> template.getInstructionTemplate())
+                .toList();
+
+        assertThat(instructions)
+                .containsExactly(
+                        "인증 물건과 함께 엄지척 해주세요.",
+                        "인증 물건과 함께 브이 포즈를 해주세요."
+                );
+    }
+
+    @Test
+    void seededTemplatesAllowMissionAssignmentWithoutManualFixture() {
+        User user = userRepository.saveAndFlush(User.createGuest(NOW));
+        Routine routine = routineRepository.saveAndFlush(Routine.create(
+                user.getId(),
+                RoutineCategory.WELL_BEING,
+                "물 마시기",
+                LocalTime.of(18, 0),
+                LocalTime.of(20, 0),
+                RepeatType.DAILY,
+                "CUP",
+                SERVICE_DATE,
+                NOW
+        ));
+        DailyRoutine dailyRoutine = dailyRoutineRepository.saveAndFlush(
+                DailyRoutine.createSnapshot(routine, SERVICE_DATE, NOW)
+        );
+        DefaultPhotoMissionService service = new DefaultPhotoMissionService(
+                () -> new CurrentUser(user.getId()),
+                userRepository,
+                dailyRoutineRepository,
+                templateRepository,
+                new PhotoMissionSelector(),
+                new FixedTimeProvider(NOW)
+        );
+
+        PhotoMissionResponse response = transactionTemplate.execute(status ->
+                service.preparePhotoMission(dailyRoutine.getId()));
+
+        assertThat(response).isNotNull();
+        assertThat(response.verificationObject()).isEqualTo("CUP");
+        assertThat(response.mission().gestureCode()).isIn("THUMBS_UP", "V_SIGN");
+        assertThat(response.mission().instruction())
+                .startsWith("인증 물건과 함께");
+        assertThat(dailyRoutineRepository.findById(dailyRoutine.getId()).orElseThrow().getMissionTemplateId())
+                .isNotNull();
+    }
 
     @Test
     void concurrentRequestsPersistAndReturnOneMission() throws Exception {

@@ -210,7 +210,7 @@ class DefaultSpeechAnalysisServiceTests {
                 .thenAnswer(invocation -> latestJobs.remove());
         when(styleAnalyzer.analyze(data)).thenReturn(analyzed);
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(dialogueGenerator.generateStrict(eq(candidate), eq("테스터"), anySet())).thenReturn(dialogues);
+        when(dialogueGenerator.generateWithSafeFallback(eq(candidate), eq("테스터"), anySet())).thenReturn(dialogues);
 
         invokeRunAnalysis(data);
 
@@ -218,6 +218,57 @@ class DefaultSpeechAnalysisServiceTests {
         verify(profileActivator).validateCandidate(candidate, dialogues);
         verify(profileActivator, never()).activate(any(), any(), any());
         verify(profileRepository, never()).findByUserId(USER_ID);
+        verify(temporaryStore).delete(JOB_ID);
+    }
+
+    @Test
+    void kakaoAnalysisUsesSafeDialogueFallbackPathAndCompletesJob() throws Exception {
+        SpeechAnalysisJob job = job(
+                JOB_ID,
+                NOW.plus(10, ChronoUnit.MINUTES),
+                NOW,
+                SpeechAnalysisJobStatus.PREPROCESSING
+        );
+        PreprocessedSpeechData data = new PreprocessedSpeechData(List.of(), 50, Map.of(), Map.of());
+        SpeechProfileCandidate candidate = new SpeechProfileCandidate(
+                SpeechSourceType.KAKAO_CHAT,
+                null,
+                SpeechStyleSettings.calm(),
+                "{}",
+                false,
+                50,
+                List.of()
+        );
+        AnalyzedSpeechProfile analyzed = new AnalyzedSpeechProfile(candidate, Set.of());
+        List<DialogueCandidate> fallbackDialogues = List.of(new DialogueCandidate(
+                DialogueSituation.ROUTINE_AVAILABLE,
+                "fallback dialogue",
+                false,
+                false
+        ));
+        User user = mock(User.class);
+        when(user.getNickname()).thenReturn("tester");
+        when(jobRepository.findOwnedForUpdate(JOB_ID, USER_ID)).thenReturn(Optional.of(job));
+        Queue<Optional<SpeechAnalysisJob>> latestJobs = new ArrayDeque<>(List.of(
+                Optional.of(job),
+                Optional.of(job),
+                Optional.of(job)
+        ));
+        when(jobRepository.findFirstByUserIdOrderByCreatedAtDesc(USER_ID))
+                .thenAnswer(invocation -> latestJobs.remove());
+        when(styleAnalyzer.analyze(data)).thenReturn(analyzed);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(dialogueGenerator.generateWithSafeFallback(eq(candidate), eq("tester"), anySet()))
+                .thenReturn(fallbackDialogues);
+        when(profileRepository.findByUserId(USER_ID)).thenReturn(Optional.empty());
+
+        invokeRunAnalysis(data);
+
+        assertThat(job.getStatus()).isEqualTo(SpeechAnalysisJobStatus.COMPLETED);
+        verify(dialogueGenerator).generateWithSafeFallback(eq(candidate), eq("tester"), anySet());
+        verify(dialogueGenerator, never()).generateStrict(any(), any(), anySet());
+        verify(profileActivator).validateCandidate(candidate, fallbackDialogues);
+        verify(profileActivator).activate(USER_ID, candidate, fallbackDialogues);
         verify(temporaryStore).delete(JOB_ID);
     }
 
