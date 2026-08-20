@@ -76,6 +76,73 @@ public class SpeechStyleProfile {
     protected SpeechStyleProfile() {
     }
 
+    public static SpeechStyleProfile create(
+            Long userId,
+            SpeechSourceType sourceType,
+            String presetCode,
+            SpeechLevel speechLevel,
+            SentenceLength sentenceLength,
+            SpeechAttributeLevel directness,
+            SpeechAttributeLevel warmth,
+            SpeechAttributeLevel playfulness,
+            SpeechAttributeLevel emotionalIntensity,
+            String styleJson,
+            boolean profanityDetected,
+            boolean profanityEnabled,
+            Integer validMessageCount,
+            Instant now
+    ) {
+        SpeechStyleProfile profile = new SpeechStyleProfile();
+        profile.userId = userId;
+        profile.createdAt = now;
+        profile.replace(
+                sourceType,
+                presetCode,
+                speechLevel,
+                sentenceLength,
+                directness,
+                warmth,
+                playfulness,
+                emotionalIntensity,
+                styleJson,
+                profanityDetected,
+                profanityEnabled,
+                validMessageCount,
+                now
+        );
+        return profile;
+    }
+
+    public void replace(
+            SpeechSourceType sourceType,
+            String presetCode,
+            SpeechLevel speechLevel,
+            SentenceLength sentenceLength,
+            SpeechAttributeLevel directness,
+            SpeechAttributeLevel warmth,
+            SpeechAttributeLevel playfulness,
+            SpeechAttributeLevel emotionalIntensity,
+            String styleJson,
+            boolean profanityDetected,
+            boolean profanityEnabled,
+            Integer validMessageCount,
+            Instant now
+    ) {
+        this.sourceType = sourceType;
+        this.presetCode = presetCode;
+        this.speechLevel = speechLevel;
+        this.sentenceLength = sentenceLength;
+        this.directness = directness;
+        this.warmth = warmth;
+        this.playfulness = playfulness;
+        this.emotionalIntensity = emotionalIntensity;
+        this.styleJson = styleJson;
+        this.profanityDetected = profanityDetected;
+        this.profanityEnabled = profanityEnabled;
+        this.validMessageCount = validMessageCount;
+        this.updatedAt = now;
+    }
+
     public Long getId() {
         return id;
     }

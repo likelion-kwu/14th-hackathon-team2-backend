@@ -1,0 +1,98 @@
+{
+  "verificationObjects": [
+    {
+      "code": "CUP",
+      "name": "컵"
+    },
+    {
+      "code": "COSMETIC_CONTAINER",
+      "name": "화장품 용기"
+    },
+    {
+      "code": "TOWEL",
+      "name": "수건"
+    },
+    {
+      "code": "TOOTHBRUSH",
+      "name": "칫솔"
+    },
+    {
+      "code": "SUPPLEMENT_CONTAINER",
+      "name": "영양제 용기"
+    }
+  ],
+  "recommendations": [
+    {
+      "code": "SKIN_SUNSCREEN",
+      "category": "SKIN",
+      "content": "외출 전 선크림 바르기",
+      "recommendedVerificationObject": "COSMETIC_CONTAINER"
+    },
+    {
+      "code": "SKIN_NIGHT_CARE",
+      "category": "SKIN",
+      "content": "저녁 세안 후 스킨케어하기",
+      "recommendedVerificationObject": "COSMETIC_CONTAINER"
+    },
+    {
+      "code": "SKIN_TOWEL",
+      "category": "SKIN",
+      "content": "세안 후 깨끗한 수건 사용하기",
+      "recommendedVerificationObject": "TOWEL"
+    },
+    {
+      "code": "WELL_WATER_MORNING",
+      "category": "WELL_BEING",
+      "content": "아침에 물 한 컵 마시기",
+      "recommendedVerificationObject": "CUP"
+    },
+    {
+      "code": "WELL_BRUSH_NIGHT",
+      "category": "WELL_BEING",
+      "content": "자기 전 양치하기",
+      "recommendedVerificationObject": "TOOTHBRUSH"
+    },
+    {
+      "code": "WELL_WATER_BREAK",
+      "category": "WELL_BEING",
+      "content": "휴식 시간에 물 한 컵 마시기",
+      "recommendedVerificationObject": "CUP"
+    },
+    {
+      "code": "FIT_WATER_BEFORE",
+      "category": "HEALTH_FIT",
+      "content": "운동 전 물 마시기",
+      "recommendedVerificationObject": "CUP"
+    },
+    {
+      "code": "FIT_TOWEL_AFTER",
+      "category": "HEALTH_FIT",
+      "content": "운동 후 땀 정리하기",
+      "recommendedVerificationObject": "TOWEL"
+    },
+    {
+      "code": "FIT_WATER_AFTER",
+      "category": "HEALTH_FIT",
+      "content": "운동 후 수분 보충하기",
+      "recommendedVerificationObject": "CUP"
+    },
+    {
+      "code": "DIET_WATER_BEFORE_MEAL",
+      "category": "DIET",
+      "content": "식사 전 물 한 컵 마시기",
+      "recommendedVerificationObject": "CUP"
+    },
+    {
+      "code": "DIET_SUPPLEMENT",
+      "category": "DIET",
+      "content": "오늘 영양제 챙겨 먹기",
+      "recommendedVerificationObject": "SUPPLEMENT_CONTAINER"
+    },
+    {
+      "code": "DIET_WATER_NIGHT",
+      "category": "DIET",
+      "content": "야식 대신 물 한 컵 마시기",
+      "recommendedVerificationObject": "CUP"
+    }
+  ]
+}

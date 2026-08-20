@@ -9,13 +9,13 @@ import com.likelion.hackathon_be.avatar.dto.UpdateAvatarEquipmentRequest;
 import com.likelion.hackathon_be.avatar.dto.UpdateAvatarEquipmentResponse;
 import com.likelion.hackathon_be.common.api.ApiResponse;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotNull;
+import com.likelion.hackathon_be.common.error.BusinessException;
+import com.likelion.hackathon_be.common.error.ErrorCode;
 import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -42,10 +42,10 @@ public class AvatarController {
 
     @PutMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<CreateAvatarResponse> createAvatar(
-            @NotNull @RequestParam AvatarGrowthTrack growthTrack,
+            @RequestParam(required = false) String growthTrack,
             @RequestParam(required = false) MultipartFile facePhoto
     ) {
-        return ApiResponse.of(avatarService.createAvatar(growthTrack, facePhoto));
+        return ApiResponse.of(avatarService.createAvatar(parseGrowthTrack(growthTrack), facePhoto));
     }
 
     @GetMapping(value = "/image", produces = MediaType.IMAGE_PNG_VALUE)
@@ -65,5 +65,16 @@ public class AvatarController {
             @Valid @RequestBody UpdateAvatarEquipmentRequest request
     ) {
         return ApiResponse.of(avatarService.updateEquipment(request));
+    }
+
+    private AvatarGrowthTrack parseGrowthTrack(String value) {
+        if (value == null || value.isBlank()) {
+            throw new BusinessException(ErrorCode.AVATAR_TRACK_REQUIRED);
+        }
+        try {
+            return AvatarGrowthTrack.valueOf(value);
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+        }
     }
 }

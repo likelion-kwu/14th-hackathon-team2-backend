@@ -1,0 +1,19 @@
+[Unit]
+Description=Godsaeng Lion backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=godsaeng
+Group=godsaeng
+WorkingDirectory=/opt/godsaeng-lion/backend
+EnvironmentFile=/etc/godsaeng-lion/backend.env
+ExecStart=/usr/bin/java -jar /opt/godsaeng-lion/backend/current.jar --spring.profiles.active=prod
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

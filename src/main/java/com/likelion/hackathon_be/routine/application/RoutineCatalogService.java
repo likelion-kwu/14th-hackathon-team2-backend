@@ -10,4 +10,6 @@ public interface RoutineCatalogService {
     List<VerificationObjectResponse> getVerificationObjects();
 
     List<RoutineRecommendationResponse> getRecommendations(RoutineCategory category);
+
+    boolean supportsVerificationObject(String code);
 }

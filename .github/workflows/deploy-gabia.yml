@@ -1,0 +1,183 @@
+name: Build and deploy to Gabia
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      CONTAINER_IMAGE: godsaeng-lion-backend:${{ github.sha }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Java 17
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@16f3e46a58d2b926c34615132d7969a96bccb22b # v6.0.0
+
+      - name: Test and build application
+        run: ./gradlew clean build --no-daemon
+
+      - name: Build Docker image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker build \
+            --build-arg "APP_VERSION=${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" \
+            --tag "${CONTAINER_IMAGE}" \
+            .
+          docker image inspect "${CONTAINER_IMAGE}" >/dev/null
+
+      - name: Stage deployment image
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist
+          docker save "${CONTAINER_IMAGE}" | gzip -1 > dist/backend-image.tar.gz
+          sha256sum dist/backend-image.tar.gz > dist/backend-image.tar.gz.sha256
+
+      - name: Upload deployment artifact
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: backend-image
+          path: |
+            dist/backend-image.tar.gz
+            dist/backend-image.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
+
+  deploy:
+    name: Deploy production
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+    concurrency:
+      group: gabia-production
+      cancel-in-progress: false
+
+    env:
+      SSH_HOST: ${{ vars.GABIA_HOST }}
+      SSH_PORT: ${{ vars.GABIA_SSH_PORT || '22' }}
+      SSH_USER: ${{ vars.GABIA_SSH_USER }}
+      DEPLOY_PATH: ${{ vars.GABIA_DEPLOY_PATH }}
+      HEALTH_URL: ${{ vars.GABIA_HEALTH_URL }}
+      SSH_PRIVATE_KEY: ${{ secrets.GABIA_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.GABIA_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: Check out deployment script
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download deployment artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: backend-image
+          path: dist
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          missing=0
+          for name in SSH_HOST SSH_USER DEPLOY_PATH HEALTH_URL SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::${name} is not configured in the production environment"
+              missing=1
+            fi
+          done
+          (( missing == 0 )) || exit 1
+
+          [[ "${SSH_HOST}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::GABIA_HOST is invalid"; exit 1; }
+          if [[ ! "${SSH_PORT}" =~ ^[0-9]{1,5}$ ]] || (( SSH_PORT < 1 || SSH_PORT > 65535 )); then
+            echo "::error::GABIA_SSH_PORT must be between 1 and 65535"
+            exit 1
+          fi
+          [[ "${SSH_USER}" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "::error::GABIA_SSH_USER is invalid"; exit 1; }
+          if [[ ! "${DEPLOY_PATH}" =~ ^/(opt|srv|home)/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] \
+            || [[ "/${DEPLOY_PATH}/" == *"/../"* ]] \
+            || [[ "/${DEPLOY_PATH}/" == *"/./"* ]]; then
+            echo "::error::GABIA_DEPLOY_PATH must be a safe application directory under /opt, /srv, or /home"
+            exit 1
+          fi
+          [[ "${HEALTH_URL}" =~ ^https?://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$ ]] || {
+            echo "::error::GABIA_HEALTH_URL must be an HTTP(S) loopback URL without query parameters"
+            exit 1
+          }
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -m 700 -d "${RUNNER_TEMP}/gabia-ssh"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > "${RUNNER_TEMP}/gabia-ssh/private_key"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" > "${RUNNER_TEMP}/gabia-ssh/known_hosts"
+          chmod 600 "${RUNNER_TEMP}/gabia-ssh/private_key" "${RUNNER_TEMP}/gabia-ssh/known_hosts"
+          ssh-keygen -y -f "${RUNNER_TEMP}/gabia-ssh/private_key" >/dev/null
+
+      - name: Upload and activate release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}"
+          remote_artifact="/tmp/godsaeng-lion-${release_id}.image.tar.gz"
+          remote_compose="/tmp/godsaeng-lion-${release_id}.compose.yaml"
+          artifact_sha256="$(awk '{print $1}' dist/backend-image.tar.gz.sha256)"
+          ssh_options=(
+            -i "${RUNNER_TEMP}/gabia-ssh/private_key"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${RUNNER_TEMP}/gabia-ssh/known_hosts"
+            -p "${SSH_PORT}"
+          )
+
+          scp -P "${SSH_PORT}" \
+            -i "${RUNNER_TEMP}/gabia-ssh/private_key" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=${RUNNER_TEMP}/gabia-ssh/known_hosts" \
+            dist/backend-image.tar.gz "${SSH_USER}@${SSH_HOST}:${remote_artifact}"
+
+          scp -P "${SSH_PORT}" \
+            -i "${RUNNER_TEMP}/gabia-ssh/private_key" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=${RUNNER_TEMP}/gabia-ssh/known_hosts" \
+            compose.yaml "${SSH_USER}@${SSH_HOST}:${remote_compose}"
+
+          # Configuration values are strictly validated before this deliberate client-side interpolation.
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "bash -s -- '${remote_artifact}' '${remote_compose}' '${DEPLOY_PATH}' '${HEALTH_URL}' '${release_id}' '${artifact_sha256}'" \
+            < scripts/deploy-gabia.sh
+
+      - name: Remove temporary SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f -- "${RUNNER_TEMP}/gabia-ssh/private_key" "${RUNNER_TEMP}/gabia-ssh/known_hosts"
+          rmdir -- "${RUNNER_TEMP}/gabia-ssh" 2>/dev/null || true

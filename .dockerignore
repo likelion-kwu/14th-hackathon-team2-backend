@@ -1,0 +1,13 @@
+.git
+.github
+.gradle
+build
+.env
+.env.*
+data
+.idea
+.vscode
+*.iml
+docs
+deploy
+scripts

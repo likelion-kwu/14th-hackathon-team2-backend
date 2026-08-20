@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> 2026-08-19 sync check: TO_DO progression exclusion and the Must monthly record calendar are current agreed policies. The PRD / common prompt / DB design / API spec copies delivered with this file are synchronized to them; the speech SRS remains v2.7 because this calendar change does not alter speech behavior.
+
 ## Purpose
 
 This repository is the backend for **갓생사자**, a 2026 멋쟁이사자처럼 중앙해커톤 AAC-linked MVP.
@@ -22,20 +24,20 @@ Do not broaden scope with Should/Could features while Must behavior is incomplet
 Before implementing a domain, read the relevant current document. Expected repository paths are:
 
 ```text
-docs/갓생사자_PRD_v2.1.md
-docs/갓생사자_API_SPEC_v4.3.md
-docs/갓생사자_backend_database_design_v1.8.md
+docs/갓생사자_PRD_v2.2.md
+docs/갓생사자_API_SPEC_v4.4.md
+docs/갓생사자_backend_database_design_v1.9.md
 docs/speech_style_system_SRS_v2.7.md
-docs/project_common_prompt_v4.0.md
+docs/project_common_prompt_v4.1.md
 ```
 
 Authority by concern:
 
-- product behavior and scope: `갓생사자_PRD_v2.1.md`
-- HTTP contract and error behavior: `갓생사자_API_SPEC_v4.3.md`
-- DB source-of-truth, constraints, transactions, locking: `갓생사자_backend_database_design_v1.8.md`
+- product behavior and scope: `갓생사자_PRD_v2.2.md`
+- HTTP contract and error behavior: `갓생사자_API_SPEC_v4.4.md`
+- DB source-of-truth, constraints, transactions, locking: `갓생사자_backend_database_design_v1.9.md`
 - speech-style/Kakao behavior: `speech_style_system_SRS_v2.7.md`
-- general project context and implementation guardrails: `project_common_prompt_v4.0.md`
+- general project context and implementation guardrails: `project_common_prompt_v4.1.md`
 
 If a required document is missing from the repository, report it instead of inventing the missing policy.
 If two current documents conflict, do not silently reconcile them: report the conflict before changing behavior.
@@ -53,6 +55,7 @@ Observed baseline:
 Build: Gradle Wrapper
 Language: Java 17 toolchain
 Framework: Spring Boot 4.1.0
+Container: Docker multi-stage Java 17 image + Docker Compose
 Base package: com.likelion.hackathon_be
 Web: Spring Web MVC
 Persistence: Spring Data JPA
@@ -187,6 +190,35 @@ MVP recommendations come from a server-side, pre-reviewed pool (code/JSON/YAML),
 
 Do not add real-time AI routine generation in MVP.
 A recommendation fills/suggests the form; it must not save or modify a routine without user confirmation.
+
+### Monthly record calendar (Must)
+
+The monthly record calendar is part of the MVP Must flow. Do not add a dedicated Calendar table, persistent calendar status, monthly snapshot, or separate Calendar API for it. Use `GET /api/v1/records` for the displayed month (maximum 31 days).
+
+Progression eligibility is the same as the rest of the product: `categorySnapshot != TO_DO`. `TO_DO` may appear in the underlying routine history but does not affect the calendar progression state.
+
+Calendar display contract:
+
+```text
+totalCount == 0
+→ blank (including TO_DO-only dates)
+
+past date + totalCount > 0 + completedCount == 0
+→ red X
+
+0 < completedCount < totalCount
+→ yellow -
+
+completedCount == totalCount && totalCount > 0
+→ green check
+
+future date
+→ blank
+```
+
+For today, `completedCount == 0` remains neutral/blank until the existing Record `dayStatus` becomes `FAILED`; only then show the red X. Partial completion is yellow and full completion is green regardless of the failure status of remaining routines.
+
+`N days achieved this month` means the number of green dates in the displayed month, equivalently the number of `DailySuccessRecord` rows in that month. Do not use the all-time `totalSuccessDays` field for this monthly count. Previous and next month navigation are allowed; future dates remain blank.
 
 ### DailyRoutine source of truth
 
@@ -574,7 +606,7 @@ guest session
 → Point Claim
 → Item unlock/equipment
 → Day success + Story unlock + Avatar Stage
-→ records/competition
+→ records + Must monthly calendar / competition
 → deployment + demo data + failure handling
 ```
 

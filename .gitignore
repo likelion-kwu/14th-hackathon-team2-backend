@@ -39,6 +39,7 @@ out/
 ### Local secrets and runtime files ###
 .env
 .env.*
+!.env.example
 *.pem
 /uploads/
 /temp-uploads/
