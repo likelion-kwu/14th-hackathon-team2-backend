@@ -18,6 +18,7 @@ on:
           - diagnose
           - seed
           - complete
+          - rewind
 
 permissions:
   contents: read
@@ -195,7 +196,7 @@ jobs:
 
   seed_demo:
     name: Mutate production demo guest
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ops/demo-seed-20260821' && (inputs.demo_action == 'seed' || inputs.demo_action == 'complete')
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ops/demo-seed-20260821' && (inputs.demo_action == 'seed' || inputs.demo_action == 'complete' || inputs.demo_action == 'rewind')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
@@ -270,6 +271,7 @@ jobs:
           case "${DEMO_ACTION}" in
             seed) sql_file="scripts/seed-demo-user.sql" ;;
             complete) sql_file="scripts/complete-demo-user.sql" ;;
+            rewind) sql_file="scripts/rewind-demo-user.sql" ;;
             *) echo "::error::Unsupported demo action"; exit 1 ;;
           esac
 
