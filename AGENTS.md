@@ -309,11 +309,11 @@ Do not create a persistent leaderboard table unless a measured performance probl
 Story unlock is based on consecutive full-day success:
 
 ```text
-10 → EP.1
-20 → EP.2
-30 → EP.3
-40 → EP.4
-50 → EP.5
+7 → EP.1
+14 → EP.2
+21 → EP.3
+28 → EP.4
+35 → EP.5
 ```
 
 Story unlock is permanent.

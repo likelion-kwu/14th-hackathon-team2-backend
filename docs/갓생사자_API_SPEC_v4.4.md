@@ -45,7 +45,7 @@
 - 일반 Entity ID를 UUID로 고정하지 않음
 - 존재하지 않는 인트로 Story 도메인 제거
 - 평행세계 전용 Avatar/Story API 제거
-- Story를 EP.1~EP.5, 10/20/30/40/50일 기준으로 갱신
+- Story를 EP.1~EP.5, 7/14/21/28/35일 기준으로 갱신
 - `DailyRoutine.status`를 DB 상태처럼 다루지 않음
 - 전역 `Idempotency-Key` 저장 계약 제거
 - Experience / XP / Coin / Shop / Item purchase 제거 유지
@@ -985,7 +985,7 @@ GET /api/v1/home
     "unlockProgress": {
       "nextItemMilestonePoints": 200,
       "nextStoryEpisodeNumber": 1,
-      "nextStoryRequiredStreakDays": 10
+      "nextStoryRequiredStreakDays": 7
     },
     "routines": [
       {
@@ -1766,7 +1766,7 @@ AI를 호출하지 않는다.
       "stories": [
         {
           "episodeNumber": 1,
-          "requiredStreakDays": 10
+          "requiredStreakDays": 7
         }
       ],
       "avatarStageChanged": {
@@ -2167,11 +2167,11 @@ GET /api/v1/competition/leaderboard?month=2026-08
 MVP Story:
 
 ```text
-EP.1 10일
-EP.2 20일
-EP.3 30일
-EP.4 40일
-EP.5 50일
+EP.1 7일
+EP.2 14일
+EP.3 21일
+EP.4 28일
+EP.5 35일
 ```
 
 Story는 영구 해금이다.
@@ -2207,13 +2207,13 @@ GET /api/v1/stories
     "episodes": [
       {
         "episodeNumber": 1,
-        "requiredStreakDays": 10,
+        "requiredStreakDays": 7,
         "unlocked": true,
         "unlockedAt": "2026-07-20T23:10:00+09:00"
       },
       {
         "episodeNumber": 3,
-        "requiredStreakDays": 30,
+        "requiredStreakDays": 21,
         "unlocked": false,
         "unlockedAt": null
       }
@@ -2830,11 +2830,11 @@ Routine 0개 → NO_ROUTINE
 totalSuccess 0→1
 2→3
 4→5
-9→10
-19→20
-29→30
-39→40
-49→50
+6→7
+13→14
+20→21
+27→28
+34→35
 
 미보유 Item random
 Item 모두 소유 → unlock record itemId null
@@ -2844,11 +2844,11 @@ Item 모두 소유 → unlock record itemId null
 ## Story
 
 ```text
-streak 9→10 EP.1 Stage 2
-19→20 EP.2 Stage 3
-29→30 EP.3 Stage 3
-39→40 EP.4 Stage 3
-49→50 EP.5 Stage 3
+streak 6→7 EP.1 Stage 2
+13→14 EP.2 Stage 3
+20→21 EP.3 Stage 3
+27→28 EP.4 Stage 3
+34→35 EP.5 Stage 3
 failure 후 Story 잠금 해제 상태 유지
 Stage 퇴화 없음
 ```
@@ -3183,7 +3183,7 @@ API Spec v4.3
 
 18. Competition은 Asia/Seoul 달력 월의 Point Claim 합계, 동점 공동 순위. `TO_DO`는 Point Claim이 없으므로 자동 제외된다.
 
-19. Story Unlock은 연속 하루 성공 10/20/30/40/50 → EP.1~EP.5, 영구 해금.
+19. Story Unlock은 연속 하루 성공 7/14/21/28/35 → EP.1~EP.5, 영구 해금.
 
 20. Routine 인증 PHOTO 원본 영속 저장 금지.
 
@@ -3256,4 +3256,3 @@ GET    /competition/leaderboard?month=YYYY-MM
 총 **35개 Endpoint**를 기본 계약으로 한다.
 
 실제 저장소에 이미 동등한 의미의 안정적인 Endpoint가 있다면 단순 naming 차이만으로 불필요하게 갈아엎지 않는다. 다만 제품 정책과 데이터 Source of Truth는 본 v4.3을 기준으로 맞춘다.
-

@@ -161,60 +161,118 @@ class StoryProgressionServiceTests {
     }
 
     @Test
-    void tenDayMaxUnlocksEpisodeOneAndChangesStageFromOneToTwo() {
-        StoryProgressionResult result = storyService(new StreakAnalysis(10, 10, 10), episodes())
+    void sixDayMaxDoesNotUnlockStoryAndKeepsStageOne() {
+        StoryProgressionResult result = storyService(new StreakAnalysis(6, 6, 6), episodes())
                 .progressAfterNewDailySuccess(USER_ID, NOW);
 
-        assertThat(result.successSummary().totalSuccessDays()).isEqualTo(10);
-        assertThat(result.unlockedStories()).containsExactly(new StoryUnlockResponse(1, 10));
+        assertThat(result.unlockedStories()).isEmpty();
+        assertThat(result.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(false, 1, 1));
+    }
+
+    @Test
+    void sevenDayMaxUnlocksEpisodeOneAndChangesStageFromOneToTwo() {
+        StoryProgressionResult result = storyService(new StreakAnalysis(7, 7, 7), episodes())
+                .progressAfterNewDailySuccess(USER_ID, NOW);
+
+        assertThat(result.successSummary().totalSuccessDays()).isEqualTo(7);
+        assertThat(result.unlockedStories()).containsExactly(new StoryUnlockResponse(1, 7));
         assertThat(result.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(true, 1, 2));
     }
 
     @Test
-    void twentyDayMaxUnlocksEpisodeTwoAndChangesStageFromTwoToThree() {
+    void thirteenDayMaxKeepsOnlyEpisodeOneUnlocked() {
         UserStoryUnlock ep1 = UserStoryUnlock.create(USER_ID, 1L, NOW.minusSeconds(1));
 
-        StoryProgressionResult result = storyService(new StreakAnalysis(20, 20, 20), episodes(), List.of(ep1))
+        StoryProgressionResult result = storyService(new StreakAnalysis(13, 13, 13), episodes(), List.of(ep1))
                 .progressAfterNewDailySuccess(USER_ID, NOW);
 
-        assertThat(result.unlockedStories()).containsExactly(new StoryUnlockResponse(2, 20));
+        assertThat(result.unlockedStories()).isEmpty();
+        assertThat(result.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(false, 2, 2));
+    }
+
+    @Test
+    void fourteenDayMaxUnlocksEpisodeTwoAndChangesStageFromTwoToThree() {
+        UserStoryUnlock ep1 = UserStoryUnlock.create(USER_ID, 1L, NOW.minusSeconds(1));
+
+        StoryProgressionResult result = storyService(new StreakAnalysis(14, 14, 14), episodes(), List.of(ep1))
+                .progressAfterNewDailySuccess(USER_ID, NOW);
+
+        assertThat(result.unlockedStories()).containsExactly(new StoryUnlockResponse(2, 14));
         assertThat(result.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(true, 2, 3));
     }
 
     @Test
-    void thirtyDayMaxUnlocksEpisodeThreeWithoutChangingStageFromThree() {
+    void twentyDayMaxKeepsOnlyEpisodeTwoUnlocked() {
         UserStoryUnlock ep1 = UserStoryUnlock.create(USER_ID, 1L, NOW.minusSeconds(2));
         UserStoryUnlock ep2 = UserStoryUnlock.create(USER_ID, 2L, NOW.minusSeconds(1));
 
-        StoryProgressionResult result = storyService(new StreakAnalysis(30, 30, 30), episodes(), List.of(ep1, ep2))
+        StoryProgressionResult result = storyService(new StreakAnalysis(20, 20, 20), episodes(), List.of(ep1, ep2))
                 .progressAfterNewDailySuccess(USER_ID, NOW);
 
-        assertThat(result.unlockedStories()).containsExactly(new StoryUnlockResponse(3, 30));
+        assertThat(result.unlockedStories()).isEmpty();
         assertThat(result.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(false, 3, 3));
     }
 
     @Test
-    void fortyAndFiftyMilestonesUnlockEpisodesFourAndFive() {
-        StoryProgressionResult forty = storyService(new StreakAnalysis(40, 40, 40), episodes())
-                .progressAfterNewDailySuccess(USER_ID, NOW);
-        StoryProgressionResult fifty = storyService(new StreakAnalysis(50, 50, 50), episodes())
+    void twentyOneDayMaxUnlocksEpisodeThreeWithoutChangingStageFromThree() {
+        UserStoryUnlock ep1 = UserStoryUnlock.create(USER_ID, 1L, NOW.minusSeconds(2));
+        UserStoryUnlock ep2 = UserStoryUnlock.create(USER_ID, 2L, NOW.minusSeconds(1));
+
+        StoryProgressionResult result = storyService(new StreakAnalysis(21, 21, 21), episodes(), List.of(ep1, ep2))
                 .progressAfterNewDailySuccess(USER_ID, NOW);
 
-        assertThat(forty.unlockedStories()).extracting(StoryUnlockResponse::episodeNumber)
-                .contains(1, 2, 3, 4);
-        assertThat(fifty.unlockedStories()).extracting(StoryUnlockResponse::episodeNumber)
-                .contains(1, 2, 3, 4, 5);
+        assertThat(result.unlockedStories()).containsExactly(new StoryUnlockResponse(3, 21));
+        assertThat(result.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(false, 3, 3));
     }
 
     @Test
-    void maxThirtyOneUnlocksAllMissingEpisodesUpToEpisodeThree() {
-        StoryProgressionResult result = storyService(new StreakAnalysis(31, 31, 31), episodes())
+    void twentySevenAndTwentyEightBoundaryControlsEpisodeFour() {
+        List<UserStoryUnlock> firstThree = List.of(
+                UserStoryUnlock.create(USER_ID, 1L, NOW.minusSeconds(3)),
+                UserStoryUnlock.create(USER_ID, 2L, NOW.minusSeconds(2)),
+                UserStoryUnlock.create(USER_ID, 3L, NOW.minusSeconds(1))
+        );
+
+        StoryProgressionResult twentySeven = storyService(new StreakAnalysis(27, 27, 27), episodes(), firstThree)
+                .progressAfterNewDailySuccess(USER_ID, NOW);
+        StoryProgressionResult twentyEight = storyService(new StreakAnalysis(28, 28, 28), episodes(), firstThree)
+                .progressAfterNewDailySuccess(USER_ID, NOW);
+
+        assertThat(twentySeven.unlockedStories()).isEmpty();
+        assertThat(twentySeven.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(false, 3, 3));
+        assertThat(twentyEight.unlockedStories()).containsExactly(new StoryUnlockResponse(4, 28));
+        assertThat(twentyEight.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(false, 3, 3));
+    }
+
+    @Test
+    void thirtyFourAndThirtyFiveBoundaryControlsEpisodeFive() {
+        List<UserStoryUnlock> firstFour = List.of(
+                UserStoryUnlock.create(USER_ID, 1L, NOW.minusSeconds(4)),
+                UserStoryUnlock.create(USER_ID, 2L, NOW.minusSeconds(3)),
+                UserStoryUnlock.create(USER_ID, 3L, NOW.minusSeconds(2)),
+                UserStoryUnlock.create(USER_ID, 4L, NOW.minusSeconds(1))
+        );
+
+        StoryProgressionResult thirtyFour = storyService(new StreakAnalysis(34, 34, 34), episodes(), firstFour)
+                .progressAfterNewDailySuccess(USER_ID, NOW);
+        StoryProgressionResult thirtyFive = storyService(new StreakAnalysis(35, 35, 35), episodes(), firstFour)
+                .progressAfterNewDailySuccess(USER_ID, NOW);
+
+        assertThat(thirtyFour.unlockedStories()).isEmpty();
+        assertThat(thirtyFour.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(false, 3, 3));
+        assertThat(thirtyFive.unlockedStories()).containsExactly(new StoryUnlockResponse(5, 35));
+        assertThat(thirtyFive.avatarStageChanged()).isEqualTo(new AvatarStageChangedResponse(false, 3, 3));
+    }
+
+    @Test
+    void maxTwentyTwoUnlocksAllMissingEpisodesUpToEpisodeThree() {
+        StoryProgressionResult result = storyService(new StreakAnalysis(22, 22, 22), episodes())
                 .progressAfterNewDailySuccess(USER_ID, NOW);
 
         assertThat(result.unlockedStories()).containsExactly(
-                new StoryUnlockResponse(1, 10),
-                new StoryUnlockResponse(2, 20),
-                new StoryUnlockResponse(3, 30)
+                new StoryUnlockResponse(1, 7),
+                new StoryUnlockResponse(2, 14),
+                new StoryUnlockResponse(3, 21)
         );
     }
 
@@ -226,7 +284,7 @@ class StoryProgressionServiceTests {
         when(unlockRepository.save(any(UserStoryUnlock.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         StoryProgressionResult result = storyService(
-                new StreakAnalysis(10, 10, 10),
+                new StreakAnalysis(7, 7, 7),
                 episodes(),
                 unlockRepository
         ).progressAfterNewDailySuccess(USER_ID, NOW);
@@ -241,7 +299,7 @@ class StoryProgressionServiceTests {
         when(unlockRepository.findByUserId(USER_ID)).thenReturn(List.of());
         when(unlockRepository.save(any(UserStoryUnlock.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        storyService(new StreakAnalysis(10, 10, 10), episodes(), unlockRepository)
+        storyService(new StreakAnalysis(7, 7, 7), episodes(), unlockRepository)
                 .progressAfterNewDailySuccess(USER_ID, NOW);
 
         ArgumentCaptor<UserStoryUnlock> captor = ArgumentCaptor.forClass(UserStoryUnlock.class);
@@ -255,7 +313,7 @@ class StoryProgressionServiceTests {
     void currentProgressReturnsEmptyStoriesAndUnchangedStage() {
         UserStoryUnlock ep1 = UserStoryUnlock.create(USER_ID, 1L, NOW.minusSeconds(1));
 
-        StoryProgressionResult result = storyService(new StreakAnalysis(10, 10, 10), episodes(), List.of(ep1))
+        StoryProgressionResult result = storyService(new StreakAnalysis(7, 7, 7), episodes(), List.of(ep1))
                 .currentProgress(USER_ID);
 
         assertThat(result.unlockedStories()).isEmpty();
@@ -315,11 +373,11 @@ class StoryProgressionServiceTests {
 
     private List<StoryEpisode> episodes() {
         return List.of(
-                storyEpisode(1L, 1, 10, (short) 2),
-                storyEpisode(2L, 2, 20, (short) 3),
-                storyEpisode(3L, 3, 30, (short) 3),
-                storyEpisode(4L, 4, 40, (short) 3),
-                storyEpisode(5L, 5, 50, (short) 3)
+                storyEpisode(1L, 1, 7, (short) 2),
+                storyEpisode(2L, 2, 14, (short) 3),
+                storyEpisode(3L, 3, 21, (short) 3),
+                storyEpisode(4L, 4, 28, (short) 3),
+                storyEpisode(5L, 5, 35, (short) 3)
         );
     }
 
