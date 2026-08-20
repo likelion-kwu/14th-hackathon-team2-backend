@@ -17,6 +17,7 @@ on:
         options:
           - diagnose
           - seed
+          - complete
 
 permissions:
   contents: read
@@ -193,8 +194,8 @@ jobs:
           rmdir -- "${RUNNER_TEMP}/gabia-ssh" 2>/dev/null || true
 
   seed_demo:
-    name: Seed production demo guest
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ops/demo-seed-20260821' && inputs.demo_action == 'seed'
+    name: Mutate production demo guest
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ops/demo-seed-20260821' && (inputs.demo_action == 'seed' || inputs.demo_action == 'complete')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
@@ -251,8 +252,10 @@ jobs:
           chmod 600 "${RUNNER_TEMP}/gabia-ssh/private_key" "${RUNNER_TEMP}/gabia-ssh/known_hosts"
           ssh-keygen -y -f "${RUNNER_TEMP}/gabia-ssh/private_key" >/dev/null
 
-      - name: Seed demo guest transaction
+      - name: Run isolated demo transaction
         shell: bash
+        env:
+          DEMO_ACTION: ${{ inputs.demo_action }}
         run: |
           set -Eeuo pipefail
           ssh_options=(
@@ -264,10 +267,15 @@ jobs:
           )
           remote_env="${DEPLOY_PATH}/.env"
           remote_compose="${DEPLOY_PATH}/compose.yaml"
+          case "${DEMO_ACTION}" in
+            seed) sql_file="scripts/seed-demo-user.sql" ;;
+            complete) sql_file="scripts/complete-demo-user.sql" ;;
+            *) echo "::error::Unsupported demo action"; exit 1 ;;
+          esac
 
           ssh "${ssh_options[@]}" "${SSH_USER}@${SSH_HOST}" \
             "test -f '${remote_env}' && test -f '${remote_compose}' && docker compose --project-directory '${DEPLOY_PATH}' --env-file '${remote_env}' --file '${remote_compose}' exec -T postgres sh -c 'psql --username \"\$POSTGRES_USER\" --dbname \"\$POSTGRES_DB\" --set=ON_ERROR_STOP=1'" \
-            < scripts/seed-demo-user.sql
+            < "${sql_file}"
 
       - name: Remove temporary SSH material
         if: always()
